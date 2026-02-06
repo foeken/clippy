@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
 import { getCalendarEvents, updateEvent, searchRooms, getRooms, getCalendarEvent } from '../lib/owa-client.js';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -226,6 +227,8 @@ export const updateEventCommand = new Command('update-event')
       console.log('\nUse options like --title, --add-attendee, --room to update.');
       return;
     }
+
+    assertReadWriteAllowed('Updating events');
 
     // Build update payload
     const updateOptions: Parameters<typeof updateEvent>[0] = {

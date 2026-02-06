@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
 import { createEvent, getRooms, searchRooms, getScheduleViaOutlook, Recurrence, RecurrencePattern, RecurrenceRange } from '../lib/owa-client.js';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -114,6 +115,10 @@ export const createEventCommand = new Command('create-event')
     token?: string;
     interactive?: boolean;
   }) => {
+    if (!options.listRooms) {
+      assertReadWriteAllowed('Creating events');
+    }
+
     const authResult = await resolveAuth({
       token: options.token,
       interactive: options.interactive,

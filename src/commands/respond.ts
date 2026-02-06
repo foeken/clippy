@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
 import { getCalendarEvents, respondToEvent, getOwaUserInfo, ResponseType } from '../lib/owa-client.js';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -169,6 +170,8 @@ export const respondCommand = new Command('respond')
       console.log('');
       return;
     }
+
+    assertReadWriteAllowed('Responding to invitations');
 
     // Handle accept/decline/tentative
     if (!['accept', 'decline', 'tentative'].includes(actionLower)) {

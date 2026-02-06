@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
 import { getCalendarEvents, deleteEvent, cancelEvent } from '../lib/owa-client.js';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -160,6 +161,8 @@ export const deleteEventCommand = new Command('delete-event')
       console.error(`Invalid event id: ${options.id}`);
       process.exit(1);
     }
+
+    assertReadWriteAllowed('Deleting events');
 
     // Check if event has attendees (other than organizer)
     const attendees = targetEvent.Attendees?.filter(a =>

@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
 import { getMailFolders, createMailFolder, updateMailFolder, deleteMailFolder } from '../lib/owa-client.js';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 export const foldersCommand = new Command('folders')
   .description('Manage mail folders')
@@ -20,6 +21,11 @@ export const foldersCommand = new Command('folders')
     token?: string;
     interactive?: boolean;
   }) => {
+    const hasWriteAction = !!(options.create || options.rename || options.delete);
+    if (hasWriteAction) {
+      assertReadWriteAllowed('Folder changes');
+    }
+
     const authResult = await resolveAuth({
       token: options.token,
       interactive: options.interactive,

@@ -1,3 +1,5 @@
+import { OUTLOOK_BASE, OUTLOOK_API, GRAPH_BASE } from './endpoints.js';
+
 export interface OwaRequestOptions {
   action: string;
   body: Record<string, unknown>;
@@ -23,7 +25,7 @@ export async function owaRequest<T = unknown>(
   options: OwaRequestOptions
 ): Promise<OwaResponse<T>> {
   const { action, body, token } = options;
-  const url = `https://outlook.office.com/owa/service.svc?action=${action}&app=Mail&n=0`;
+  const url = `${OUTLOOK_BASE}/owa/service.svc?action=${action}&app=Mail&n=0`;
 
   try {
     const response = await fetch(url, {
@@ -102,7 +104,7 @@ export async function getOwaUserInfo(
   token: string
 ): Promise<OwaResponse<OwaUserInfo>> {
   // Use Outlook REST API to get user info
-  const url = 'https://outlook.office.com/api/v2.0/me';
+  const url = `${OUTLOOK_API}/me`;
 
   try {
     const response = await fetch(url, {
@@ -187,7 +189,7 @@ export async function getCalendarEvents(
   startDateTime: string,
   endDateTime: string
 ): Promise<OwaResponse<CalendarEvent[]>> {
-  const url = `https://outlook.office.com/api/v2.0/me/calendarview?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&$orderby=Start/DateTime&$top=1000`;
+  const url = `${OUTLOOK_API}/me/calendarview?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&$orderby=Start/DateTime&$top=1000`;
 
   try {
     const response = await fetch(url, {
@@ -259,7 +261,7 @@ export async function getScheduleForUsers(
   endDateTime: string
 ): Promise<OwaResponse<ScheduleInfo[]>> {
   // Try getSchedule endpoint first
-  const url = 'https://graph.microsoft.com/v1.0/me/calendar/getSchedule';
+  const url = `${GRAPH_BASE}/v1.0/me/calendar/getSchedule`;
 
   try {
     const response = await fetch(url, {
@@ -326,7 +328,7 @@ export async function getScheduleViaOutlook(
   durationMinutes: number = 30
 ): Promise<OwaResponse<ScheduleInfo[]>> {
   // Try using FindMeetingTimes which can access other users' availability
-  const url = 'https://outlook.office.com/api/v2.0/me/FindMeetingTimes';
+  const url = `${OUTLOOK_API}/me/FindMeetingTimes`;
 
   try {
     const response = await fetch(url, {
@@ -518,7 +520,7 @@ export async function createEvent(
   options: CreateEventOptions
 ): Promise<OwaResponse<CreatedEvent>> {
   const { token, subject, start, end, body, location, attendees, isOnlineMeeting, recurrence } = options;
-  const url = 'https://outlook.office.com/api/v2.0/me/events';
+  const url = `${OUTLOOK_API}/me/events`;
 
   const eventBody: Record<string, unknown> = {
     Subject: subject,
@@ -622,7 +624,7 @@ export async function updateEvent(
   options: UpdateEventOptions
 ): Promise<OwaResponse<CreatedEvent>> {
   const { token, eventId, subject, start, end, body, location, attendees, isOnlineMeeting } = options;
-  const url = `https://outlook.office.com/api/v2.0/me/events/${encodeURIComponent(eventId)}`;
+  const url = `${OUTLOOK_API}/me/events/${encodeURIComponent(eventId)}`;
 
   const eventBody: Record<string, unknown> = {};
 
@@ -731,8 +733,8 @@ export async function getRoomLists(
 ): Promise<OwaResponse<RoomList[]>> {
   // Try Graph API first (works with Outlook token in some cases)
   const urls = [
-    'https://graph.microsoft.com/v1.0/places/microsoft.graph.roomList',
-    'https://outlook.office.com/api/v2.0/me/findRoomLists',
+    `${GRAPH_BASE}/v1.0/places/microsoft.graph.roomList`,
+    `${OUTLOOK_API}/me/findRoomLists`,
   ];
 
   for (const url of urls) {
@@ -780,12 +782,12 @@ export async function getRooms(
   // Try multiple endpoints
   const urls = roomListAddress
     ? [
-        `https://graph.microsoft.com/v1.0/places/${encodeURIComponent(roomListAddress)}/microsoft.graph.roomList/rooms`,
-        `https://outlook.office.com/api/v2.0/me/findRooms(RoomList='${encodeURIComponent(roomListAddress)}')`,
+        `${GRAPH_BASE}/v1.0/places/${encodeURIComponent(roomListAddress)}/microsoft.graph.roomList/rooms`,
+        `${OUTLOOK_API}/me/findRooms(RoomList='${encodeURIComponent(roomListAddress)}')`,
       ]
     : [
-        'https://graph.microsoft.com/v1.0/places/microsoft.graph.room',
-        'https://outlook.office.com/api/v2.0/me/findRooms',
+        `${GRAPH_BASE}/v1.0/places/microsoft.graph.room`,
+        `${OUTLOOK_API}/me/findRooms`,
       ];
 
   for (const url of urls) {
@@ -832,7 +834,7 @@ export async function searchRooms(
 ): Promise<OwaResponse<Room[]>> {
   // Use People search API with room filter
   const searchQuery = query || 'room';
-  const url = `https://outlook.office.com/api/v2.0/me/people?$search=${encodeURIComponent(searchQuery)}&$top=50`;
+  const url = `${OUTLOOK_API}/me/people?$search=${encodeURIComponent(searchQuery)}&$top=50`;
 
   try {
     const response = await fetch(url, {
@@ -891,7 +893,7 @@ export async function deleteEvent(
   token: string,
   eventId: string
 ): Promise<OwaResponse<void>> {
-  const url = `https://outlook.office.com/api/v2.0/me/events/${encodeURIComponent(eventId)}`;
+  const url = `${OUTLOOK_API}/me/events/${encodeURIComponent(eventId)}`;
 
   try {
     const response = await fetch(url, {
@@ -936,7 +938,7 @@ export async function cancelEvent(
   eventId: string,
   comment?: string
 ): Promise<OwaResponse<void>> {
-  const url = `https://outlook.office.com/api/v2.0/me/events/${encodeURIComponent(eventId)}/cancel`;
+  const url = `${OUTLOOK_API}/me/events/${encodeURIComponent(eventId)}/cancel`;
 
   try {
     const body: Record<string, unknown> = {};
@@ -1051,7 +1053,7 @@ export async function getEmails(
   // Note: $orderby is ignored when $search is used (results are ranked by relevance)
   if (!search) params.set('$orderby', orderBy);
 
-  const url = `https://outlook.office.com/api/v2.0/me/mailfolders/${folder}/messages?${params}`;
+  const url = `${OUTLOOK_API}/me/mailfolders/${folder}/messages?${params}`;
 
   try {
     const response = await fetch(url, {
@@ -1096,7 +1098,7 @@ export async function getEmail(
   token: string,
   messageId: string
 ): Promise<OwaResponse<EmailMessage>> {
-  const url = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(messageId)}`;
+  const url = `${OUTLOOK_API}/me/messages/${encodeURIComponent(messageId)}`;
 
   try {
     const response = await fetch(url, {
@@ -1155,7 +1157,7 @@ export async function getAttachments(
   token: string,
   messageId: string
 ): Promise<OwaResponse<AttachmentListResponse>> {
-  const url = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(messageId)}/attachments`;
+  const url = `${OUTLOOK_API}/me/messages/${encodeURIComponent(messageId)}/attachments`;
 
   try {
     const response = await fetch(url, {
@@ -1199,7 +1201,7 @@ export async function getAttachment(
   messageId: string,
   attachmentId: string
 ): Promise<OwaResponse<Attachment>> {
-  const url = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`;
+  const url = `${OUTLOOK_API}/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`;
 
   try {
     const response = await fetch(url, {
@@ -1248,7 +1250,7 @@ export async function updateEmail(
     };
   }
 ): Promise<OwaResponse<EmailMessage>> {
-  const url = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(messageId)}`;
+  const url = `${OUTLOOK_API}/me/messages/${encodeURIComponent(messageId)}`;
 
   try {
     const response = await fetch(url, {
@@ -1296,7 +1298,7 @@ export async function moveEmail(
   messageId: string,
   destinationFolder: string
 ): Promise<OwaResponse<EmailMessage>> {
-  const url = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(messageId)}/move`;
+  const url = `${OUTLOOK_API}/me/messages/${encodeURIComponent(messageId)}/move`;
 
   try {
     const response = await fetch(url, {
@@ -1360,8 +1362,8 @@ export async function getMailFolders(
   parentFolderId?: string
 ): Promise<OwaResponse<MailFolderListResponse>> {
   const url = parentFolderId
-    ? `https://outlook.office.com/api/v2.0/me/mailfolders/${encodeURIComponent(parentFolderId)}/childfolders`
-    : 'https://outlook.office.com/api/v2.0/me/mailfolders?$top=100';
+    ? `${OUTLOOK_API}/me/mailfolders/${encodeURIComponent(parentFolderId)}/childfolders`
+    : `${OUTLOOK_API}/me/mailfolders?$top=100`;
 
   try {
     const response = await fetch(url, {
@@ -1406,8 +1408,8 @@ export async function createMailFolder(
   parentFolderId?: string
 ): Promise<OwaResponse<MailFolder>> {
   const url = parentFolderId
-    ? `https://outlook.office.com/api/v2.0/me/mailfolders/${encodeURIComponent(parentFolderId)}/childfolders`
-    : 'https://outlook.office.com/api/v2.0/me/mailfolders';
+    ? `${OUTLOOK_API}/me/mailfolders/${encodeURIComponent(parentFolderId)}/childfolders`
+    : `${OUTLOOK_API}/me/mailfolders`;
 
   try {
     const response = await fetch(url, {
@@ -1455,7 +1457,7 @@ export async function updateMailFolder(
   folderId: string,
   displayName: string
 ): Promise<OwaResponse<MailFolder>> {
-  const url = `https://outlook.office.com/api/v2.0/me/mailfolders/${encodeURIComponent(folderId)}`;
+  const url = `${OUTLOOK_API}/me/mailfolders/${encodeURIComponent(folderId)}`;
 
   try {
     const response = await fetch(url, {
@@ -1502,7 +1504,7 @@ export async function deleteMailFolder(
   token: string,
   folderId: string
 ): Promise<OwaResponse<void>> {
-  const url = `https://outlook.office.com/api/v2.0/me/mailfolders/${encodeURIComponent(folderId)}`;
+  const url = `${OUTLOOK_API}/me/mailfolders/${encodeURIComponent(folderId)}`;
 
   try {
     const response = await fetch(url, {
@@ -1584,7 +1586,7 @@ export async function sendEmail(
 
   // If no attachments, use simple sendmail
   if (!options.attachments || options.attachments.length === 0) {
-    const url = 'https://outlook.office.com/api/v2.0/me/sendmail';
+    const url = `${OUTLOOK_API}/me/sendmail`;
 
     try {
       const response = await fetch(url, {
@@ -1626,7 +1628,7 @@ export async function sendEmail(
   // With attachments, use draft workflow: create draft -> add attachments -> send
   try {
     // Step 1: Create draft
-    const createUrl = 'https://outlook.office.com/api/v2.0/me/messages';
+    const createUrl = `${OUTLOOK_API}/me/messages`;
     const createResponse = await fetch(createUrl, {
       method: 'POST',
       headers: {
@@ -1655,7 +1657,7 @@ export async function sendEmail(
 
     // Step 2: Add attachments
     for (const attachment of options.attachments) {
-      const attachUrl = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(draftId)}/attachments`;
+      const attachUrl = `${OUTLOOK_API}/me/messages/${encodeURIComponent(draftId)}/attachments`;
       const attachResponse = await fetch(attachUrl, {
         method: 'POST',
         headers: {
@@ -1686,7 +1688,7 @@ export async function sendEmail(
     }
 
     // Step 3: Send the draft
-    const sendUrl = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(draftId)}/send`;
+    const sendUrl = `${OUTLOOK_API}/me/messages/${encodeURIComponent(draftId)}/send`;
     const sendResponse = await fetch(sendUrl, {
       method: 'POST',
       headers: {
@@ -1732,7 +1734,7 @@ async function createReplyDraft(
   isHtml: boolean = false
 ): Promise<OwaResponse<{ draftId: string }>> {
   const createAction = replyAll ? 'createreplyall' : 'createreply';
-  const createUrl = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(messageId)}/${createAction}`;
+  const createUrl = `${OUTLOOK_API}/me/messages/${encodeURIComponent(messageId)}/${createAction}`;
 
   try {
     // Step 1: Create reply draft (gets us the quoted original)
@@ -1780,7 +1782,7 @@ async function createReplyDraft(
       .replace(/\n{3,}/g, '\n\n');
 
     // Step 2: Update draft with our HTML prepended to the quoted content
-    const updateUrl = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(draftId)}`;
+    const updateUrl = `${OUTLOOK_API}/me/messages/${encodeURIComponent(draftId)}`;
 
     // Prepare the reply content
     let replyContent: string;
@@ -1886,7 +1888,7 @@ export async function replyToEmail(
   const draftId = draftResult.data.draftId;
 
   // Send the draft
-  const sendUrl = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(draftId)}/send`;
+  const sendUrl = `${OUTLOOK_API}/me/messages/${encodeURIComponent(draftId)}/send`;
   try {
     const sendResponse = await fetch(sendUrl, {
       method: 'POST',
@@ -1930,7 +1932,7 @@ export async function forwardEmail(
   toRecipients: string[],
   comment?: string
 ): Promise<OwaResponse<void>> {
-  const url = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(messageId)}/forward`;
+  const url = `${OUTLOOK_API}/me/messages/${encodeURIComponent(messageId)}/forward`;
 
   try {
     const body: Record<string, unknown> = {
@@ -2004,7 +2006,7 @@ export async function respondToEvent(
   };
 
   const action = actionMap[response];
-  const url = `https://outlook.office.com/api/v2.0/me/events/${encodeURIComponent(eventId)}/${action}`;
+  const url = `${OUTLOOK_API}/me/events/${encodeURIComponent(eventId)}/${action}`;
 
   try {
     const body: Record<string, unknown> = {
@@ -2058,7 +2060,7 @@ export async function getCalendarEvent(
   token: string,
   eventId: string
 ): Promise<OwaResponse<CalendarEvent>> {
-  const url = `https://outlook.office.com/api/v2.0/me/events/${encodeURIComponent(eventId)}`;
+  const url = `${OUTLOOK_API}/me/events/${encodeURIComponent(eventId)}`;
 
   try {
     const response = await fetch(url, {
@@ -2097,7 +2099,7 @@ export async function getCalendarEvent(
 
 export async function validateSession(token: string): Promise<boolean> {
   // Use Outlook REST API to validate the token
-  const url = 'https://outlook.office.com/api/v2.0/me/mailfolders/inbox';
+  const url = `${OUTLOOK_API}/me/mailfolders/inbox`;
 
   try {
     const response = await fetch(url, {

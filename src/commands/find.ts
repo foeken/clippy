@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
+import { OUTLOOK_API } from '../lib/endpoints.js';
 
 interface Person {
   DisplayName?: string;
@@ -19,7 +20,7 @@ async function searchPeople(
   query: string,
   filter?: 'people' | 'rooms'
 ): Promise<Person[]> {
-  const url = `https://outlook.office.com/api/v2.0/me/people?$search=${encodeURIComponent(query)}&$top=25`;
+  const url = `${OUTLOOK_API}/me/people?$search=${encodeURIComponent(query)}&$top=25`;
 
   const response = await fetch(url, {
     headers: {

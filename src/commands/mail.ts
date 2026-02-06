@@ -4,6 +4,7 @@ import { getEmails, getEmail, getAttachments, getAttachment, updateEmail, moveEm
 import { markdownToHtml } from '../lib/markdown.js';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -84,6 +85,14 @@ export const mailCommand = new Command('mail')
     interactive?: boolean;
     draft?: boolean;
   }) => {
+    const hasWriteAction = !!(
+      options.markRead || options.markUnread || options.flag || options.unflag || options.complete ||
+      options.move || options.reply || options.replyAll || options.forward
+    );
+    if (hasWriteAction) {
+      assertReadWriteAllowed('Email write actions');
+    }
+
     const authResult = await resolveAuth({
       token: options.token,
       interactive: options.interactive,
