@@ -5,6 +5,7 @@ import { markdownToHtml } from '../lib/markdown.js';
 import { readFile, stat } from 'fs/promises';
 import { basename } from 'path';
 import { lookup } from 'mime-types';
+import { OUTLOOK_API } from '../lib/endpoints.js';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -38,7 +39,7 @@ async function createDraft(
     bodyType?: 'Text' | 'HTML';
   }
 ): Promise<OwaResponse<{ Id: string }>> {
-  const url = 'https://outlook.office.com/api/v2.0/me/messages';
+  const url = `${OUTLOOK_API}/me/messages`;
 
   const message: Record<string, unknown> = {};
 
@@ -114,7 +115,7 @@ async function updateDraft(
     bodyType?: 'Text' | 'HTML';
   }
 ): Promise<OwaResponse<void>> {
-  const url = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(draftId)}`;
+  const url = `${OUTLOOK_API}/me/messages/${encodeURIComponent(draftId)}`;
 
   const message: Record<string, unknown> = {};
 
@@ -179,7 +180,7 @@ async function updateDraft(
 }
 
 async function sendDraft(token: string, draftId: string): Promise<OwaResponse<void>> {
-  const url = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(draftId)}/send`;
+  const url = `${OUTLOOK_API}/me/messages/${encodeURIComponent(draftId)}/send`;
 
   try {
     const response = await fetch(url, {
@@ -216,7 +217,7 @@ async function sendDraft(token: string, draftId: string): Promise<OwaResponse<vo
 }
 
 async function deleteDraft(token: string, draftId: string): Promise<OwaResponse<void>> {
-  const url = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(draftId)}`;
+  const url = `${OUTLOOK_API}/me/messages/${encodeURIComponent(draftId)}`;
 
   try {
     const response = await fetch(url, {
@@ -257,7 +258,7 @@ async function addAttachmentToDraft(
   draftId: string,
   attachment: { name: string; contentType: string; contentBytes: string }
 ): Promise<OwaResponse<void>> {
-  const url = `https://outlook.office.com/api/v2.0/me/messages/${encodeURIComponent(draftId)}/attachments`;
+  const url = `${OUTLOOK_API}/me/messages/${encodeURIComponent(draftId)}/attachments`;
 
   try {
     const response = await fetch(url, {

@@ -4,6 +4,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { readFile, writeFile, mkdir, unlink, open, readlink, rm } from 'fs/promises';
 import { validateSession } from './owa-client.js';
+import { OUTLOOK_BASE, LOGIN_BASE, GRAPH_BASE, OUTLOOK_SCOPE } from './endpoints.js';
 
 /**
  * Clean up stale Chrome SingletonLock if the owning process is no longer running.
@@ -254,17 +255,17 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   try {
     console.log('[refreshAccessToken] Attempting token refresh via OAuth...');
     
-    const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+    const response = await fetch(`${LOGIN_BASE}/common/oauth2/v2.0/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Origin': 'https://outlook.office.com', // Required for SPA tokens
+        'Origin': OUTLOOK_BASE, // Required for SPA tokens
       },
       body: new URLSearchParams({
         client_id: OUTLOOK_CLIENT_ID,
         grant_type: 'refresh_token',
         refresh_token: refreshToken,
-        scope: 'https://outlook.office.com/.default offline_access',
+        scope: OUTLOOK_SCOPE,
       }).toString(),
     });
 
@@ -453,7 +454,7 @@ async function tryExtractToken(
       }
       
       // Capture refresh token from OAuth token endpoint
-      if (url.includes('login.microsoftonline.com') && url.includes('/oauth2/') && url.includes('/token')) {
+      if (url.includes(LOGIN_BASE) && url.includes('/oauth2/') && url.includes('/token')) {
         console.log('[tryExtract] 🔑 Token endpoint response detected!');
         try {
           const text = await response.text();
@@ -491,12 +492,12 @@ async function tryExtractToken(
         const token = authHeader.replace('Bearer ', '');
 
         // Capture Outlook token
-        if (url.includes('outlook.office.com') && !capturedToken) {
+        if (url.includes(OUTLOOK_BASE) && !capturedToken) {
           capturedToken = token;
         }
 
         // Capture Graph token
-        if (url.includes('graph.microsoft.com') && !capturedGraphToken) {
+        if (url.includes(GRAPH_BASE) && !capturedGraphToken) {
           capturedGraphToken = token;
         }
       }
@@ -507,7 +508,7 @@ async function tryExtractToken(
     }
 
     console.log(`[tryExtract] Navigating to Outlook (timeout=${timeout}ms)...`);
-    await page.goto('https://outlook.office.com/mail/', {
+    await page.goto(`${OUTLOOK_BASE}/mail/`, {
       waitUntil: 'domcontentloaded',
       timeout,
     });
@@ -644,10 +645,10 @@ export async function startKeepaliveSession(options: { intervalMinutes: number; 
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.replace('Bearer ', '');
 
-      if (url.includes('outlook.office.com')) {
+      if (url.includes(OUTLOOK_BASE)) {
         lastToken = token;
       }
-      if (url.includes('graph.microsoft.com')) {
+      if (url.includes(GRAPH_BASE)) {
         lastGraphToken = token;
       }
     }
@@ -656,7 +657,7 @@ export async function startKeepaliveSession(options: { intervalMinutes: number; 
   // Helper: check if we landed on a login page
   const isLoginPage = (url: string): boolean => {
     return url.includes('/login') || 
-           url.includes('login.microsoftonline.com') || 
+           url.includes(LOGIN_BASE) ||
            url.includes('login.live.com') ||
            url.includes('/oauth2/') ||
            url.includes('/common/oauth2/');
@@ -708,7 +709,7 @@ export async function startKeepaliveSession(options: { intervalMinutes: number; 
   };
 
   console.log(`Opening Outlook session (headless=${headless ? 'true' : 'false'})...`);
-  await page.goto('https://outlook.office.com/mail/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(`${OUTLOOK_BASE}/mail/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
   // Immediately check if we landed on a login page
   const initialUrl = page.url();
@@ -799,7 +800,7 @@ export async function startKeepaliveSession(options: { intervalMinutes: number; 
     } catch {
       // If reload fails, try to navigate again
       try {
-        await page.goto('https://outlook.office.com/mail/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.goto(`${OUTLOOK_BASE}/mail/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
         
         // Check if navigation landed us on login page
         const afterNavUrl = page.url();
@@ -823,8 +824,9 @@ export async function startKeepaliveSession(options: { intervalMinutes: number; 
 export async function resolveAuth(options: {
   token?: string;
   interactive?: boolean;
+  headless?: boolean;
 }): Promise<AuthResult> {
-  const { token: cliToken, interactive = false } = options;
+  const { token: cliToken, interactive = false, headless } = options;
 
   // Priority 1: CLI flag
   if (cliToken) {
@@ -877,7 +879,10 @@ export async function resolveAuth(options: {
 
   // Priority 4: Interactive Playwright extraction
   if (interactive) {
-    const playwrightResult = await extractTokenViaPlaywright();
+    const playwrightResult = await extractTokenViaPlaywright({
+      headless: headless !== undefined ? headless : true,
+      fallbackToVisible: headless !== false,
+    });
     if (playwrightResult.success && playwrightResult.token) {
       const isValid = await validateSession(playwrightResult.token);
       if (isValid) {

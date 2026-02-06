@@ -20,6 +20,33 @@ bun link
 clippy <command>
 ```
 
+## Configuration
+
+Copy `.env.example` to `.env` and adjust for your environment:
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Values | Default | Description |
+|---|---|---|---|
+| `CLIPPY_CLOUD` | `commercial`, `gcc` | `commercial` | Microsoft cloud environment |
+| `CLIPPY_TOKEN` | Bearer token string | — | Skip browser login with a token directly |
+
+### Cloud Environments
+
+- **`commercial`** — Standard Microsoft 365 (`outlook.office.com`)
+- **`gcc`** — Office 365 US Government (`outlook.office365.us`)
+
+You can also pass `--gcc` on any command instead of using the `.env` file:
+
+```bash
+clippy --gcc login --interactive
+clippy --gcc calendar
+```
+
+---
+
 ## Authentication
 
 Clippy uses browser-based authentication to obtain tokens from Outlook. During login, it captures both an access token (short-lived, ~1 hour) and a refresh token (long-lived, days/weeks).
@@ -357,9 +384,11 @@ clippy find "conference" --rooms
 All commands support:
 
 ```bash
+--gcc               # Use Office 365 US Government (GCC) endpoints
 --json              # Output as JSON (for scripting)
 --token <token>     # Use a specific token
 -i, --interactive   # Force interactive browser login
+--no-headless       # Show the browser window during login (don't run headless)
 ```
 
 ---
