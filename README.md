@@ -73,6 +73,10 @@ clippy calendar nextweek
 # Include details (attendees, body preview, categories)
 clippy calendar -v
 clippy calendar week --verbose
+
+# Get one event by ID, including full body text
+clippy calendar --id "<eventId>" --json
+clippy calendar --id "<eventId>" --body
 ```
 
 ### Create Events
