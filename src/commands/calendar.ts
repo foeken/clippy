@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { getCalendarEvents, type CalendarEvent, type CalendarAttendee } from '../lib/ews-client.js';
+import { getCalendarEvent, getCalendarEvents, type CalendarEvent, type CalendarAttendee } from '../lib/ews-client.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -171,14 +171,30 @@ function displayEvent(event: CalendarEvent, verbose: boolean): void {
   }
 }
 
+function printEventBody(event: CalendarEvent): void {
+  const body = event.Body?.Content || event.BodyPreview || '';
+  console.log(body || '(no body)');
+}
+
 export const calendarCommand = new Command('calendar')
   .description('View calendar events')
   .argument('[start]', 'Start day: today, yesterday, tomorrow, monday-sunday, week, lastweek, nextweek, or YYYY-MM-DD', 'today')
   .argument('[end]', 'End day for range (optional)')
   .option('-v, --verbose', 'Show attendees and more details')
+  .option('--id <eventId>', 'Show a single calendar event by EWS item ID')
+  .option('--body', 'Print the full body text for --id')
   .option('--json', 'Output as JSON')
   .option('--token <token>', 'Use a specific token')
-  .action(async (startDay: string, endDay: string | undefined, options: { json?: boolean; token?: string; verbose?: boolean }) => {
+  .action(async (startDay: string, endDay: string | undefined, options: { json?: boolean; token?: string; verbose?: boolean; id?: string; body?: boolean }) => {
+    if (options.body && !options.id) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: '--body requires --id <eventId>' }, null, 2));
+      } else {
+        console.error('Error: --body requires --id <eventId>');
+      }
+      process.exit(1);
+    }
+
     const authResult = await resolveAuth({
       token: options.token,
     });
@@ -191,6 +207,32 @@ export const calendarCommand = new Command('calendar')
         console.error('\nCheck your .env file for EWS_CLIENT_ID and EWS_REFRESH_TOKEN.');
       }
       process.exit(1);
+    }
+
+    if (options.id) {
+      const result = await getCalendarEvent(authResult.token!, options.id);
+
+      if (!result.ok || !result.data) {
+        if (options.json) {
+          console.log(JSON.stringify({ error: result.error?.message || 'Failed to fetch event' }, null, 2));
+        } else {
+          console.error(`Error: ${result.error?.message || 'Failed to fetch event'}`);
+        }
+        process.exit(1);
+      }
+
+      if (options.json) {
+        console.log(JSON.stringify(result.data, null, 2));
+        return;
+      }
+
+      if (options.body) {
+        printEventBody(result.data);
+        return;
+      }
+
+      displayEvent(result.data, options.verbose ?? true);
+      return;
     }
 
     const { start, end, label } = getDateRange(startDay, endDay);

@@ -165,6 +165,7 @@ export interface CalendarEvent {
   IsCancelled?: boolean;
   IsOrganizer?: boolean;
   BodyPreview?: string;
+  Body?: { ContentType: string; Content: string };
   Categories?: string[];
   ShowAs?: string;
   Importance?: string;
@@ -339,7 +340,7 @@ export interface RespondToEventOptions {
 
 // ─── Parsing Helpers ───
 
-function parseCalendarItem(block: string): CalendarEvent {
+function parseCalendarItem(block: string, includeFullBody = false): CalendarEvent {
   const id = extractAttribute(block, 'ItemId', 'Id');
   const changeKey = extractAttribute(block, 'ItemId', 'ChangeKey');
   const subject = extractTag(block, 'Subject');
@@ -348,7 +349,10 @@ function parseCalendarItem(block: string): CalendarEvent {
   const location = extractTag(block, 'Location');
   const isAllDay = extractTag(block, 'IsAllDayEvent').toLowerCase() === 'true';
   const isCancelled = extractTag(block, 'IsCancelled').toLowerCase() === 'true';
-  const bodyPreview = extractTag(block, 'TextBody') || extractTag(block, 'Body');
+  const textBody = extractTag(block, 'TextBody');
+  const itemBody = extractTag(block, 'Body');
+  const bodyContent = includeFullBody ? (itemBody || textBody) : (textBody || itemBody);
+  const bodyType = extractAttribute(block, 'Body', 'BodyType') || 'Text';
   const importance = extractTag(block, 'Importance') || 'Normal';
   const showAs = extractTag(block, 'LegacyFreeBusyStatus') || 'Busy';
 
@@ -413,7 +417,8 @@ function parseCalendarItem(block: string): CalendarEvent {
     IsAllDay: isAllDay,
     IsCancelled: isCancelled,
     IsOrganizer: isOrganizer,
-    BodyPreview: bodyPreview ? bodyPreview.substring(0, 200).replace(/\s+/g, ' ').trim() : undefined,
+    BodyPreview: bodyContent ? bodyContent.substring(0, 200).replace(/\s+/g, ' ').trim() : undefined,
+    Body: includeFullBody && bodyContent ? { ContentType: bodyType, Content: bodyContent } : undefined,
     Categories: categories.length > 0 ? categories : undefined,
     ShowAs: showAs,
     Importance: importance,
@@ -602,7 +607,7 @@ export async function getCalendarEvents(
 
     const xml = await callEws(token, envelope);
     const blocks = extractBlocks(xml, 'CalendarItem');
-    const events = blocks.map(parseCalendarItem);
+    const events = blocks.map(block => parseCalendarItem(block));
 
     return ewsResult(events);
   } catch (err) {
@@ -619,6 +624,7 @@ export async function getCalendarEvent(
     <m:GetItem>
       <m:ItemShape>
         <t:BaseShape>Default</t:BaseShape>
+        <t:BodyType>Text</t:BodyType>
         <t:AdditionalProperties>
           <t:FieldURI FieldURI="calendar:Location" />
           <t:FieldURI FieldURI="calendar:Organizer" />
@@ -631,6 +637,7 @@ export async function getCalendarEvent(
           <t:FieldURI FieldURI="calendar:MyResponseType" />
           <t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" />
           <t:FieldURI FieldURI="item:Importance" />
+          <t:FieldURI FieldURI="item:Body" />
           <t:FieldURI FieldURI="item:TextBody" />
         </t:AdditionalProperties>
       </m:ItemShape>
@@ -643,7 +650,7 @@ export async function getCalendarEvent(
     const block = extractBlocks(xml, 'CalendarItem')[0];
     if (!block) return { ok: false, status: 404, error: { code: 'NOT_FOUND', message: 'Event not found' } };
 
-    return ewsResult(parseCalendarItem(block));
+    return ewsResult(parseCalendarItem(block, true));
   } catch (err) {
     return ewsError(err);
   }
