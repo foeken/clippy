@@ -257,6 +257,29 @@ export interface RawFreeBusyAttendeeStatus {
   email: string;
   statusCode: string;
   status: MergedFreeBusyStatus;
+  events?: RawFreeBusyEvent[];
+}
+
+export interface RawFreeBusyEvent {
+  start: string;
+  end: string;
+  busyType: string;
+  subject?: string;
+  location?: string;
+  isMeeting?: boolean;
+  isRecurring?: boolean;
+  isException?: boolean;
+  isReminderSet?: boolean;
+  isPrivate?: boolean;
+}
+
+export interface RawFreeBusyAttendeeDetails {
+  email: string;
+  responseCode?: string;
+  responseClass?: string;
+  freeBusyViewType?: string;
+  mergedFreeBusy?: string;
+  events: RawFreeBusyEvent[];
 }
 
 export interface RawFreeBusySlot {
@@ -272,6 +295,7 @@ export interface RawFreeBusyResult {
   start: string;
   end: string;
   slots: RawFreeBusySlot[];
+  attendeeDetails?: RawFreeBusyAttendeeDetails[];
 }
 
 export interface Room {
@@ -1935,7 +1959,8 @@ export async function getRawFreeBusy(
   emails: string[],
   startDateTime: string,
   endDateTime: string,
-  intervalMinutes: number = 30
+  intervalMinutes: number = 30,
+  includeDetails: boolean = false
 ): Promise<OwaResponse<RawFreeBusyResult>> {
   try {
     const mailboxDataXml = emails.map(email => `
@@ -1979,10 +2004,14 @@ export async function getRawFreeBusy(
     const xml = await callEws(token, envelope);
     const responses = extractBlocks(xml, 'FreeBusyResponse');
     const availabilityViews = responses.map(response => extractTag(response, 'MergedFreeBusy'));
-    const slotCount = availabilityViews.length > 0
-      ? Math.min(...availabilityViews.map(view => view.length))
-      : 0;
+    const attendeeDetails = includeDetails
+      ? responses.map((response, index) => parseRawFreeBusyDetails(emails[index], response))
+      : undefined;
     const rangeStart = new Date(startDateTime);
+    const rangeEnd = new Date(endDateTime);
+    const slotCount = Math.max(0, Math.ceil(
+      (rangeEnd.getTime() - rangeStart.getTime()) / (intervalMinutes * 60 * 1000)
+    ));
     const slots: RawFreeBusySlot[] = [];
 
     for (let i = 0; i < slotCount; i++) {
@@ -1990,10 +2019,14 @@ export async function getRawFreeBusy(
       const end = new Date(start.getTime() + intervalMinutes * 60 * 1000);
       const attendees = emails.map((email, attendeeIndex) => {
         const statusCode = availabilityViews[attendeeIndex]?.[i] || '4';
+        const events = attendeeDetails?.[attendeeIndex]?.events.filter(event =>
+          event.busyType !== 'Free' && eventOverlapsSlot(event, start, end)
+        );
         return {
           email,
           statusCode,
           status: mergedFreeBusyStatus(statusCode),
+          ...(events && events.length > 0 ? { events } : {}),
         };
       });
 
@@ -2011,10 +2044,58 @@ export async function getRawFreeBusy(
       start: startDateTime,
       end: endDateTime,
       slots,
+      ...(attendeeDetails ? { attendeeDetails } : {}),
     });
   } catch (err) {
     return ewsError(err);
   }
+}
+
+function parseRawFreeBusyDetails(email: string, response: string): RawFreeBusyAttendeeDetails {
+  const eventBlocks = extractBlocks(response, 'CalendarEvent');
+  const events = eventBlocks.map(event => {
+    const details = extractBlocks(event, 'CalendarEventDetails')[0] || '';
+    const subject = extractTag(details, 'Subject');
+    const location = extractTag(details, 'Location');
+
+    return {
+      start: extractTag(event, 'StartTime'),
+      end: extractTag(event, 'EndTime'),
+      busyType: extractTag(event, 'BusyType'),
+      ...(subject ? { subject } : {}),
+      ...(location ? { location } : {}),
+      ...booleanFact(details, 'IsMeeting', 'isMeeting'),
+      ...booleanFact(details, 'IsRecurring', 'isRecurring'),
+      ...booleanFact(details, 'IsException', 'isException'),
+      ...booleanFact(details, 'IsReminderSet', 'isReminderSet'),
+      ...booleanFact(details, 'IsPrivate', 'isPrivate'),
+    };
+  });
+
+  return {
+    email,
+    responseCode: extractTag(response, 'ResponseCode') || undefined,
+    responseClass: extractAttribute(response, 'ResponseMessage', 'ResponseClass') || undefined,
+    freeBusyViewType: extractTag(response, 'FreeBusyViewType') || undefined,
+    mergedFreeBusy: extractTag(response, 'MergedFreeBusy') || undefined,
+    events,
+  };
+}
+
+function booleanFact(xml: string, tagName: string, fieldName: string): Record<string, boolean> {
+  const value = extractTag(xml, tagName);
+  return value ? { [fieldName]: value.toLowerCase() === 'true' } : {};
+}
+
+function eventOverlapsSlot(event: RawFreeBusyEvent, slotStart: Date, slotEnd: Date): boolean {
+  const eventStart = new Date(event.start);
+  const eventEnd = new Date(event.end);
+
+  if (Number.isNaN(eventStart.getTime()) || Number.isNaN(eventEnd.getTime())) {
+    return false;
+  }
+
+  return eventStart < slotEnd && eventEnd > slotStart;
 }
 
 export async function getFreeBusy(

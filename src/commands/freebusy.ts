@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { getOwaUserInfo, getRawFreeBusy, type RawFreeBusySlot } from '../lib/ews-client.js';
+import { getOwaUserInfo, getRawFreeBusy, type RawFreeBusyEvent, type RawFreeBusySlot } from '../lib/ews-client.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -127,8 +127,33 @@ function filterSlots(slots: RawFreeBusySlot[], options: { workStart: number; wor
 
 function statusLine(slot: RawFreeBusySlot): string {
   return slot.attendees
-    .map(attendee => `${attendee.email}: ${attendee.status}`)
+    .map(attendee => {
+      const events = attendee.events && attendee.events.length > 0
+        ? ` [${attendee.events.map(formatEventFact).join('; ')}]`
+        : '';
+      return `${attendee.email}: ${attendee.status}${events}`;
+    })
     .join(', ');
+}
+
+function formatBooleanFact(label: string, value: boolean | undefined): string | undefined {
+  return value === undefined ? undefined : `${label}=${value}`;
+}
+
+function formatEventFact(event: RawFreeBusyEvent): string {
+  const facts = [
+    `${formatTime(event.start)}-${formatTime(event.end)}`,
+    event.busyType,
+    event.subject ? `subject="${event.subject}"` : undefined,
+    event.location ? `location="${event.location}"` : undefined,
+    formatBooleanFact('private', event.isPrivate),
+    formatBooleanFact('meeting', event.isMeeting),
+    formatBooleanFact('recurring', event.isRecurring),
+    formatBooleanFact('exception', event.isException),
+    formatBooleanFact('reminder', event.isReminderSet),
+  ].filter(Boolean);
+
+  return facts.join(' ');
 }
 
 function printSlots(slots: RawFreeBusySlot[], showAll: boolean): void {
@@ -159,6 +184,7 @@ export const freebusyCommand = new Command('freebusy')
   .option('--work-end <hour>', 'Work day end hour (0-24)', '17')
   .option('--include-weekends', 'Include Saturday and Sunday slots')
   .option('--all', 'Show all raw slots, including busy/tentative/OOF slots')
+  .option('--details', 'Show raw event facts returned by Exchange for busy/tentative slots')
   .option('--solo', 'Only check specified people, do not include yourself')
   .option('--json', 'Output as JSON')
   .option('--token <token>', 'Use a specific token')
@@ -168,6 +194,7 @@ export const freebusyCommand = new Command('freebusy')
     workEnd: string;
     includeWeekends?: boolean;
     all?: boolean;
+    details?: boolean;
     solo?: boolean;
     json?: boolean;
     token?: string;
@@ -244,7 +271,8 @@ export const freebusyCommand = new Command('freebusy')
       emails,
       start.toISOString(),
       end.toISOString(),
-      interval
+      interval,
+      Boolean(options.details)
     );
 
     if (!result.ok || !result.data) {
@@ -275,7 +303,9 @@ export const freebusyCommand = new Command('freebusy')
           workEnd,
           includeWeekends: Boolean(options.includeWeekends),
           all: Boolean(options.all),
+          details: Boolean(options.details),
         },
+        attendeeDetails: result.data.attendeeDetails,
         availableSlots,
         slots: outputSlots,
       }, null, 2));
