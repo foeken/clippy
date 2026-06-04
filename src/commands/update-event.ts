@@ -52,14 +52,10 @@ function parseTimeToDate(timeStr: string, baseDate: Date): Date {
   return result;
 }
 
-function toLocalISOString(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+function toEwsDateTime(date: Date): string {
+  // EWS can preserve an item's existing timezone when given floating timestamps.
+  // The CLI accepts local wall-clock input, so send the exact UTC instant.
+  return date.toISOString();
 }
 
 export const updateEventCommand = new Command('update-event')
@@ -244,12 +240,12 @@ export const updateEventCommand = new Command('update-event')
 
       if (options.start) {
         const newStart = parseTimeToDate(options.start, eventDate);
-        updateOptions.start = toLocalISOString(newStart);
+        updateOptions.start = toEwsDateTime(newStart);
       }
 
       if (options.end) {
         const newEnd = parseTimeToDate(options.end, eventDate);
-        updateOptions.end = toLocalISOString(newEnd);
+        updateOptions.end = toEwsDateTime(newEnd);
       }
     }
 

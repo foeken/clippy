@@ -36,15 +36,17 @@ function parseTimeToDate(timeStr: string, baseDate: Date = new Date()): Date {
   return result;
 }
 
-function toLocalISOString(date: Date): string {
-  // Format as YYYY-MM-DDTHH:mm:ss without timezone offset
+function toLocalDateString(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+  return `${year}-${month}-${day}`;
+}
+
+function toEwsDateTime(date: Date): string {
+  // EWS CreateItem can treat floating local timestamps as UTC. The CLI accepts
+  // local wall-clock input, so send the exact UTC instant that represents it.
+  return date.toISOString();
 }
 
 function parseDay(day: string): Date {
@@ -300,7 +302,7 @@ export const createEventCommand = new Command('create-event')
       // Build range
       const range: RecurrenceRange = {
         Type: 'NoEnd',
-        StartDate: start.toISOString().split('T')[0],
+        StartDate: toLocalDateString(start),
       };
 
       if (options.until) {
@@ -318,8 +320,8 @@ export const createEventCommand = new Command('create-event')
     const result = await createEvent({
       token: authResult.token!,
       subject: title,
-      start: toLocalISOString(start),
-      end: toLocalISOString(end),
+      start: toEwsDateTime(start),
+      end: toEwsDateTime(end),
       body: options.description,
       location: roomName,
       attendees: attendees.length > 0 ? attendees : undefined,
