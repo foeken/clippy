@@ -1126,17 +1126,19 @@ export async function replyToEmail(
   messageId: string,
   comment: string,
   replyAll: boolean = false,
-  isHtml: boolean = false
+  isHtml: boolean = false,
+  changeKey?: string
 ): Promise<OwaResponse<void>> {
   try {
     const tag = replyAll ? 'ReplyAllToItem' : 'ReplyToItem';
     const bodyType = isHtml ? 'HTML' : 'Text';
+    const changeKeyAttr = changeKey ? ` ChangeKey="${xmlEscape(changeKey)}"` : '';
 
     const envelope = soapEnvelope(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
         <t:${tag}>
-          <t:ReferenceItemId Id="${xmlEscape(messageId)}" />
+          <t:ReferenceItemId Id="${xmlEscape(messageId)}"${changeKeyAttr} />
           <t:NewBodyContent BodyType="${bodyType}">${xmlEscape(comment)}</t:NewBodyContent>
         </t:${tag}>
       </m:Items>
@@ -1154,17 +1156,19 @@ export async function replyToEmailDraft(
   messageId: string,
   comment: string,
   replyAll: boolean = false,
-  isHtml: boolean = false
+  isHtml: boolean = false,
+  changeKey?: string
 ): Promise<OwaResponse<{ draftId: string }>> {
   try {
     const tag = replyAll ? 'ReplyAllToItem' : 'ReplyToItem';
     const bodyType = isHtml ? 'HTML' : 'Text';
+    const changeKeyAttr = changeKey ? ` ChangeKey="${xmlEscape(changeKey)}"` : '';
 
     const envelope = soapEnvelope(`
     <m:CreateItem MessageDisposition="SaveOnly">
       <m:Items>
         <t:${tag}>
-          <t:ReferenceItemId Id="${xmlEscape(messageId)}" />
+          <t:ReferenceItemId Id="${xmlEscape(messageId)}"${changeKeyAttr} />
           <t:NewBodyContent BodyType="${bodyType}">${xmlEscape(comment)}</t:NewBodyContent>
         </t:${tag}>
       </m:Items>
@@ -1182,18 +1186,20 @@ export async function forwardEmail(
   token: string,
   messageId: string,
   toRecipients: string[],
-  comment?: string
+  comment?: string,
+  changeKey?: string
 ): Promise<OwaResponse<void>> {
   try {
     const toXml = toRecipients.map(e =>
       `<t:Mailbox><t:EmailAddress>${xmlEscape(e)}</t:EmailAddress></t:Mailbox>`
     ).join('');
+    const changeKeyAttr = changeKey ? ` ChangeKey="${xmlEscape(changeKey)}"` : '';
 
     const envelope = soapEnvelope(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
         <t:ForwardItem>
-          <t:ReferenceItemId Id="${xmlEscape(messageId)}" />
+          <t:ReferenceItemId Id="${xmlEscape(messageId)}"${changeKeyAttr} />
           ${comment ? `<t:NewBodyContent BodyType="Text">${xmlEscape(comment)}</t:NewBodyContent>` : ''}
           <t:ToRecipients>${toXml}</t:ToRecipients>
         </t:ForwardItem>

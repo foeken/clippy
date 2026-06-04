@@ -398,13 +398,21 @@ export const mailCommand = new Command('mail')
         isHtml = true;
       }
 
+      const referenceEmail = await getEmail(authResult.token!, id);
+      if (!referenceEmail.ok || !referenceEmail.data) {
+        console.error(`Error: ${referenceEmail.error?.message || 'Failed to fetch email'}`);
+        process.exit(1);
+      }
+      const changeKey = referenceEmail.data.ChangeKey;
+
       if (options.draft) {
         const result = await replyToEmailDraft(
           authResult.token!,
           id,
           message,
           isReplyAll,
-          isHtml
+          isHtml,
+          changeKey
         );
 
         if (!result.ok || !result.data) {
@@ -422,7 +430,8 @@ export const mailCommand = new Command('mail')
         id,
         message,
         isReplyAll,
-        isHtml
+        isHtml,
+        changeKey
       );
 
       if (!result.ok) {
@@ -446,12 +455,18 @@ export const mailCommand = new Command('mail')
       }
 
       const recipients = options.toAddr.split(',').map(e => e.trim()).filter(Boolean);
+      const referenceEmail = await getEmail(authResult.token!, id);
+      if (!referenceEmail.ok || !referenceEmail.data) {
+        console.error(`Error: ${referenceEmail.error?.message || 'Failed to fetch email'}`);
+        process.exit(1);
+      }
 
       const result = await forwardEmail(
         authResult.token!,
         id,
         recipients,
-        options.message
+        options.message,
+        referenceEmail.data.ChangeKey
       );
 
       if (!result.ok) {
