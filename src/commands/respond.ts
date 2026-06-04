@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { getCalendarEvents, respondToEvent, getOwaUserInfo, ResponseType } from '../lib/ews-client.js';
+import { getCalendarEvent, getCalendarEvents, respondToEvent, getOwaUserInfo, ResponseType } from '../lib/ews-client.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -20,6 +20,14 @@ function getResponseIcon(response: string): string {
     case 'None':
     case 'NotResponded': return '\u2022';
     default: return ' ';
+  }
+}
+
+function writeError(message: string, json?: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ error: message }, null, 2));
+  } else {
+    console.error(`Error: ${message}`);
   }
 }
 
@@ -57,59 +65,63 @@ export const respondCommand = new Command('respond')
       process.exit(1);
     }
 
-    // Get user's email to identify their response status
-    const userInfo = await getOwaUserInfo(authResult.token!);
-    const userEmail = userInfo.data?.email?.toLowerCase();
+    // Default action is 'list'
+    const actionLower = (action || 'list').toLowerCase();
 
-    // Fetch upcoming events
-    const now = new Date();
-    const futureDate = new Date(now);
-    futureDate.setDate(futureDate.getDate() + 30); // Look 30 days ahead
-
-    const result = await getCalendarEvents(
-      authResult.token!,
-      now.toISOString(),
-      futureDate.toISOString()
-    );
-
-    if (!result.ok || !result.data) {
-      if (options.json) {
-        console.log(JSON.stringify({ error: result.error?.message || 'Failed to fetch events' }, null, 2));
-      } else {
-        console.error(`Error: ${result.error?.message || 'Failed to fetch events'}`);
+    if (!['list', 'accept', 'decline', 'tentative'].includes(actionLower)) {
+      writeError(`Unknown action: ${action}`, options.json);
+      if (!options.json) {
+        console.error('Valid actions: list, accept, decline, tentative');
       }
       process.exit(1);
     }
 
-    // Filter to events where user is an attendee (and not organizer)
-    const pendingEvents = result.data.filter(event => {
-      if (event.IsCancelled) return false;
-      if (event.IsOrganizer) return false;
+    if (actionLower === 'list') {
+      // Get user's email to identify their response status
+      const userInfo = await getOwaUserInfo(authResult.token!);
+      const userEmail = userInfo.data?.email?.toLowerCase();
 
-      // Find user's attendance record
-      const myAttendance = event.Attendees?.find(
-        a => a.EmailAddress?.Address?.toLowerCase() === userEmail
+      // Fetch upcoming events
+      const now = new Date();
+      const futureDate = new Date(now);
+      futureDate.setDate(futureDate.getDate() + 30); // Look 30 days ahead
+
+      const result = await getCalendarEvents(
+        authResult.token!,
+        now.toISOString(),
+        futureDate.toISOString()
       );
 
-      // Some events don't include attendee records; fall back to event-level ResponseStatus if present
-      const eventResponse = (event as any).ResponseStatus?.Response as string | undefined;
-      const response = myAttendance?.Status?.Response || eventResponse || 'None';
+      if (!result.ok || !result.data) {
+        writeError(result.error?.message || 'Failed to fetch events', options.json);
+        process.exit(1);
+      }
 
-      // Include events where response is None or NotResponded
-      const isPending = response === 'None' || response === 'NotResponded';
-      if (!isPending) return false;
+      // Filter to events where user is an attendee (and not organizer)
+      const pendingEvents = result.data.filter(event => {
+        if (event.IsCancelled) return false;
+        if (event.IsOrganizer) return false;
 
-      // Optional attendance handling (only if we can detect it)
-      const isOptional = myAttendance?.Type === 'Optional';
-      if (options.onlyRequired && isOptional) return false;
+        // Find user's attendance record
+        const myAttendance = event.Attendees?.find(
+          a => a.EmailAddress?.Address?.toLowerCase() === userEmail
+        );
 
-      return true;
-    });
+        // Some events don't include attendee records; fall back to event-level ResponseStatus if present
+        const eventResponse = (event as any).ResponseStatus?.Response as string | undefined;
+        const response = myAttendance?.Status?.Response || eventResponse || 'None';
 
-    // Default action is 'list'
-    const actionLower = (action || 'list').toLowerCase();
+        // Include events where response is None or NotResponded
+        const isPending = response === 'None' || response === 'NotResponded';
+        if (!isPending) return false;
 
-    if (actionLower === 'list') {
+        // Optional attendance handling (only if we can detect it)
+        const isOptional = myAttendance?.Type === 'Optional';
+        if (options.onlyRequired && isOptional) return false;
+
+        return true;
+      });
+
       if (options.json) {
         console.log(JSON.stringify({
           pendingEvents: pendingEvents.map((e, i) => ({
@@ -167,32 +179,39 @@ export const respondCommand = new Command('respond')
       return;
     }
 
-    // Handle accept/decline/tentative
-    if (!['accept', 'decline', 'tentative'].includes(actionLower)) {
-      console.error(`Unknown action: ${action}`);
-      console.error('Valid actions: list, accept, decline, tentative');
-      process.exit(1);
-    }
-
     if (!options.id) {
-      console.error('Please specify the event id with --id.');
-      console.error('Run `clippy respond list` to see pending invitations and IDs.');
+      writeError('Please specify the event id with --id.', options.json);
+      if (!options.json) {
+        console.error('Run `clippy respond list` to see pending invitations and IDs.');
+      }
       process.exit(1);
     }
 
-    const targetEvent = pendingEvents.find(e => e.Id === options.id);
-    if (!targetEvent) {
-      console.error(`Invalid event id: ${options.id}`);
+    const targetResult = await getCalendarEvent(authResult.token!, options.id);
+    if (!targetResult.ok || !targetResult.data) {
+      writeError(targetResult.error?.message || `Event not found: ${options.id}`, options.json);
       process.exit(1);
     }
 
-    console.log(`\nResponding to: ${targetEvent.Subject}`);
-    console.log(`  ${formatDate(targetEvent.Start.DateTime)} ${formatTime(targetEvent.Start.DateTime)} - ${formatTime(targetEvent.End.DateTime)}`);
-    console.log(`  Action: ${actionLower}`);
-    if (options.comment) {
-      console.log(`  Comment: ${options.comment}`);
+    const targetEvent = targetResult.data;
+    if (targetEvent.IsCancelled) {
+      writeError(`Cannot respond to a cancelled event: ${targetEvent.Subject}`, options.json);
+      process.exit(1);
     }
-    console.log('');
+    if (targetEvent.IsOrganizer) {
+      writeError('Cannot respond to an event you organized. Use update-event or delete-event instead.', options.json);
+      process.exit(1);
+    }
+
+    if (!options.json) {
+      console.log(`\nResponding to: ${targetEvent.Subject}`);
+      console.log(`  ${formatDate(targetEvent.Start.DateTime)} ${formatTime(targetEvent.Start.DateTime)} - ${formatTime(targetEvent.End.DateTime)}`);
+      console.log(`  Action: ${actionLower}`);
+      if (options.comment) {
+        console.log(`  Comment: ${options.comment}`);
+      }
+      console.log('');
+    }
 
     const response = await respondToEvent({
       token: authResult.token!,
@@ -203,17 +222,22 @@ export const respondCommand = new Command('respond')
     });
 
     if (!response.ok) {
-      if (options.json) {
-        console.log(JSON.stringify({ error: response.error?.message || 'Failed to respond' }, null, 2));
-      } else {
-        console.error(`Error: ${response.error?.message || 'Failed to respond'}`);
-      }
+      writeError(response.error?.message || 'Failed to respond', options.json);
       process.exit(1);
     }
 
     const actionPast = actionLower === 'tentative' ? 'tentatively accepted' : `${actionLower}d`;
     if (options.json) {
-      console.log(JSON.stringify({ success: true, action: actionLower }, null, 2));
+      console.log(JSON.stringify({
+        success: true,
+        action: actionLower,
+        event: {
+          id: targetEvent.Id,
+          subject: targetEvent.Subject,
+          start: targetEvent.Start.DateTime,
+          end: targetEvent.End.DateTime,
+        },
+      }, null, 2));
     } else {
       console.log(`\u2713 Successfully ${actionPast} the invitation.`);
     }
