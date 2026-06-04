@@ -1378,11 +1378,33 @@ export async function updateDraft(
   }
 }
 
+async function getItemChangeKey(token: string, itemId: string): Promise<string> {
+  const envelope = soapEnvelope(`
+  <m:GetItem>
+    <m:ItemShape>
+      <t:BaseShape>IdOnly</t:BaseShape>
+    </m:ItemShape>
+    <m:ItemIds>
+      <t:ItemId Id="${xmlEscape(itemId)}" />
+    </m:ItemIds>
+  </m:GetItem>`);
+
+  const xml = await callEws(token, envelope);
+  const changeKey = extractAttribute(xml, 'ItemId', 'ChangeKey');
+
+  if (!changeKey) {
+    throw new Error('EWS did not return a ChangeKey for this item.');
+  }
+
+  return changeKey;
+}
+
 async function sendItemById(token: string, itemId: string): Promise<void> {
+  const changeKey = await getItemChangeKey(token, itemId);
   const envelope = soapEnvelope(`
   <m:SendItem SaveItemToFolder="true">
     <m:ItemIds>
-      <t:ItemId Id="${xmlEscape(itemId)}" />
+      <t:ItemId Id="${xmlEscape(itemId)}" ChangeKey="${xmlEscape(changeKey)}" />
     </m:ItemIds>
     <m:SavedItemFolderId>
       <t:DistinguishedFolderId Id="sentitems" />
