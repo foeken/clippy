@@ -202,6 +202,25 @@ clippy findtime nextweek alice@company.com --duration 60 --start 10 --end 16
 clippy findtime nextweek alice@company.com --solo
 ```
 
+### Raw Free/Busy
+
+```bash
+# Show raw slots where everyone is free
+clippy freebusy nextweek alice@company.com bob@company.com
+
+# Check a specific date range
+clippy freebusy 2026-06-22 2026-07-10 alice@company.com
+
+# Inspect every raw slot with each attendee's Free/Tentative/Busy/OOF status
+clippy freebusy 2026-06-22 2026-07-10 alice@company.com --all
+
+# JSON output for scripts
+clippy freebusy nextweek alice@company.com --json
+
+# Custom slot size (defaults to 30 minutes) and work window
+clippy freebusy nextweek alice@company.com --interval 30 --work-start 10 --work-end 16
+```
+
 ---
 
 ## Email Commands

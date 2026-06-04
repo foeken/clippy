@@ -10,7 +10,7 @@ export {
   getMailFolders, createMailFolder, updateMailFolder, deleteMailFolder,
   getAttachments, getAttachment,
   resolveNames, getRoomLists, getRooms, searchRooms,
-  getScheduleViaOutlook, getFreeBusy,
+  getScheduleViaOutlook, getRawFreeBusy, getFreeBusy,
 } from './lib/ews-client.js';
 
 export type {
@@ -21,6 +21,7 @@ export type {
   MailFolder, MailFolderListResponse,
   Attachment, AttachmentListResponse,
   Room, RoomList, ScheduleInfo, FreeBusySlot,
+  MergedFreeBusyStatus, RawFreeBusyAttendeeStatus, RawFreeBusySlot, RawFreeBusyResult,
   Recurrence, RecurrencePattern, RecurrenceRange,
   ResponseType, RespondToEventOptions,
 } from './lib/ews-client.js';

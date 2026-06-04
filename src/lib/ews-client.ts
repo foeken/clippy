@@ -251,6 +251,29 @@ export interface FreeBusySlot {
   subject?: string;
 }
 
+export type MergedFreeBusyStatus = 'Free' | 'Tentative' | 'Busy' | 'OOF' | 'NoData';
+
+export interface RawFreeBusyAttendeeStatus {
+  email: string;
+  statusCode: string;
+  status: MergedFreeBusyStatus;
+}
+
+export interface RawFreeBusySlot {
+  start: string;
+  end: string;
+  attendees: RawFreeBusyAttendeeStatus[];
+  allFree: boolean;
+}
+
+export interface RawFreeBusyResult {
+  attendees: string[];
+  intervalMinutes: number;
+  start: string;
+  end: string;
+  slots: RawFreeBusySlot[];
+}
+
 export interface Room {
   Address: string;
   Name: string;
@@ -1853,6 +1876,114 @@ export async function getScheduleViaOutlook(
     }
 
     return ewsResult(schedules);
+  } catch (err) {
+    return ewsError(err);
+  }
+}
+
+function toEwsLocalDateTime(dateTime: string): string {
+  const date = new Date(dateTime);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function mergedFreeBusyStatus(code: string): MergedFreeBusyStatus {
+  switch (code) {
+    case '0':
+      return 'Free';
+    case '1':
+      return 'Tentative';
+    case '2':
+      return 'Busy';
+    case '3':
+      return 'OOF';
+    default:
+      return 'NoData';
+  }
+}
+
+export async function getRawFreeBusy(
+  token: string,
+  emails: string[],
+  startDateTime: string,
+  endDateTime: string,
+  intervalMinutes: number = 30
+): Promise<OwaResponse<RawFreeBusyResult>> {
+  try {
+    const mailboxDataXml = emails.map(email => `
+    <t:MailboxData>
+      <t:Email><t:Address>${xmlEscape(email)}</t:Address></t:Email>
+      <t:AttendeeType>Required</t:AttendeeType>
+    </t:MailboxData>`).join('');
+
+    const envelope = soapEnvelope(`
+    <m:GetUserAvailabilityRequest>
+      <t:TimeZone>
+        <t:Bias>-60</t:Bias>
+        <t:StandardTime>
+          <t:Bias>0</t:Bias>
+          <t:Time>03:00:00</t:Time>
+          <t:DayOrder>5</t:DayOrder>
+          <t:Month>10</t:Month>
+          <t:DayOfWeek>Sunday</t:DayOfWeek>
+        </t:StandardTime>
+        <t:DaylightTime>
+          <t:Bias>-60</t:Bias>
+          <t:Time>02:00:00</t:Time>
+          <t:DayOrder>5</t:DayOrder>
+          <t:Month>3</t:Month>
+          <t:DayOfWeek>Sunday</t:DayOfWeek>
+        </t:DaylightTime>
+      </t:TimeZone>
+      <m:MailboxDataArray>
+        ${mailboxDataXml}
+      </m:MailboxDataArray>
+      <t:FreeBusyViewOptions>
+        <t:TimeWindow>
+          <t:StartTime>${xmlEscape(toEwsLocalDateTime(startDateTime))}</t:StartTime>
+          <t:EndTime>${xmlEscape(toEwsLocalDateTime(endDateTime))}</t:EndTime>
+        </t:TimeWindow>
+        <t:MergedFreeBusyIntervalInMinutes>${intervalMinutes}</t:MergedFreeBusyIntervalInMinutes>
+        <t:RequestedView>DetailedMerged</t:RequestedView>
+      </t:FreeBusyViewOptions>
+    </m:GetUserAvailabilityRequest>`);
+
+    const xml = await callEws(token, envelope);
+    const responses = extractBlocks(xml, 'FreeBusyResponse');
+    const availabilityViews = responses.map(response => extractTag(response, 'MergedFreeBusy'));
+    const slotCount = availabilityViews.length > 0
+      ? Math.min(...availabilityViews.map(view => view.length))
+      : 0;
+    const rangeStart = new Date(startDateTime);
+    const slots: RawFreeBusySlot[] = [];
+
+    for (let i = 0; i < slotCount; i++) {
+      const start = new Date(rangeStart.getTime() + i * intervalMinutes * 60 * 1000);
+      const end = new Date(start.getTime() + intervalMinutes * 60 * 1000);
+      const attendees = emails.map((email, attendeeIndex) => {
+        const statusCode = availabilityViews[attendeeIndex]?.[i] || '4';
+        return {
+          email,
+          statusCode,
+          status: mergedFreeBusyStatus(statusCode),
+        };
+      });
+
+      slots.push({
+        start: start.toISOString(),
+        end: end.toISOString(),
+        attendees,
+        allFree: attendees.every(a => a.status === 'Free'),
+      });
+    }
+
+    return ewsResult({
+      attendees: emails,
+      intervalMinutes,
+      start: startDateTime,
+      end: endDateTime,
+      slots,
+    });
   } catch (err) {
     return ewsError(err);
   }
