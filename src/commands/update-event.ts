@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { getCalendarEvents, updateEvent, searchRooms, getRooms, getCalendarEvent } from '../lib/ews-client.js';
+import { getCalendarEvents, updateEvent, searchRooms, getRooms, getCalendarEvent, type CalendarShowAs } from '../lib/ews-client.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -58,6 +58,63 @@ function toEwsDateTime(date: Date): string {
   return date.toISOString();
 }
 
+function formatShowAs(showAs?: string): string {
+  switch (showAs) {
+    case 'OOF':
+      return 'Out of office';
+    case 'WorkingElsewhere':
+      return 'Working elsewhere';
+    default:
+      return showAs || 'Busy';
+  }
+}
+
+function parseShowAs(value: string): CalendarShowAs | undefined {
+  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, '-');
+  const aliases: Record<string, CalendarShowAs> = {
+    free: 'Free',
+    busy: 'Busy',
+    tentative: 'Tentative',
+    oof: 'OOF',
+    away: 'OOF',
+    'out-of-office': 'OOF',
+    workingelsewhere: 'WorkingElsewhere',
+    'working-elsewhere': 'WorkingElsewhere',
+    elsewhere: 'WorkingElsewhere',
+  };
+
+  return aliases[normalized];
+}
+
+function resolveShowAs(options: { showAs?: string; free?: boolean; busy?: boolean }): CalendarShowAs | undefined {
+  const values: CalendarShowAs[] = [];
+
+  if (options.showAs) {
+    const showAs = parseShowAs(options.showAs);
+    if (!showAs) {
+      throw new Error('Invalid --show-as value. Use free, busy, tentative, oof, or working-elsewhere.');
+    }
+    values.push(showAs);
+  }
+  if (options.free) values.push('Free');
+  if (options.busy) values.push('Busy');
+
+  const unique = [...new Set(values)];
+  if (unique.length > 1) {
+    throw new Error('Conflicting availability options. Use only one of --show-as, --free, or --busy.');
+  }
+
+  return unique[0];
+}
+
+function writeError(message: string, json?: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ error: message }, null, 2));
+  } else {
+    console.error(`Error: ${message}`);
+  }
+}
+
 export const updateEventCommand = new Command('update-event')
   .description('Update a calendar event')
   .argument('[eventIndex]', 'Event index from the list (deprecated; use --id)')
@@ -70,6 +127,9 @@ export const updateEventCommand = new Command('update-event')
   .option('--add-attendee <email>', 'Add an attendee (can be used multiple times)', (val, arr: string[]) => [...arr, val], [])
   .option('--room <room>', 'Set/change meeting room (name or email)')
   .option('--location <text>', 'Set location text')
+  .option('--show-as <status>', 'Set availability: free, busy, tentative, oof, working-elsewhere')
+  .option('--free', 'Shortcut for --show-as free')
+  .option('--busy', 'Shortcut for --show-as busy')
   .option('--teams', 'Make it a Teams meeting')
   .option('--no-teams', 'Remove Teams meeting')
   .option('--json', 'Output as JSON')
@@ -84,10 +144,21 @@ export const updateEventCommand = new Command('update-event')
     addAttendee: string[];
     room?: string;
     location?: string;
+    showAs?: string;
+    free?: boolean;
+    busy?: boolean;
     teams?: boolean;
     json?: boolean;
     token?: string;
   }) => {
+    let requestedShowAs: CalendarShowAs | undefined;
+    try {
+      requestedShowAs = resolveShowAs(options);
+    } catch (err) {
+      writeError(err instanceof Error ? err.message : 'Invalid availability option', options.json);
+      process.exit(1);
+    }
+
     const authResult = await resolveAuth({
       token: options.token,
     });
@@ -127,8 +198,8 @@ export const updateEventCommand = new Command('update-event')
     // Filter to events the user owns
     const events = result.data.filter(e => e.IsOrganizer && !e.IsCancelled);
 
-    // If no id provided, list events
-    if (!options.id) {
+    // If no target provided, list events
+    if (!options.id && !eventIndex) {
       if (options.json) {
         console.log(JSON.stringify({
           events: events.map((e, i) => ({
@@ -137,6 +208,7 @@ export const updateEventCommand = new Command('update-event')
             subject: e.Subject,
             start: e.Start.DateTime,
             end: e.End.DateTime,
+            showAs: e.ShowAs,
             attendees: e.Attendees?.map(a => a.EmailAddress?.Address),
           })),
         }, null, 2));
@@ -159,6 +231,7 @@ export const updateEventCommand = new Command('update-event')
 
         console.log(`\n  [${i + 1}] ${event.Subject}`);
         console.log(`      ${startTime} - ${endTime}`);
+        console.log(`      Show as: ${formatShowAs(event.ShowAs)}`);
         console.log(`      ID: ${event.Id}`);
         if (event.Location?.DisplayName) {
           console.log(`      Location: ${event.Location.DisplayName}`);
@@ -180,32 +253,53 @@ export const updateEventCommand = new Command('update-event')
       console.log('  clippy update-event <number> --add-attendee user@example.com');
       console.log('  clippy update-event <number> --room "Taxi"');
       console.log('  clippy update-event <number> --start 14:00 --end 15:00');
+      console.log('  clippy update-event <number> --show-as busy');
       console.log('');
       return;
     }
 
-    // Get the target event by ID
+    // Get the target event by ID or list index
+    let targetEvent = options.id ? events.find(e => e.Id === options.id) : undefined;
+    if (options.id && !targetEvent) {
+      const targetResult = await getCalendarEvent(authResult.token!, options.id);
+      if (!targetResult.ok || !targetResult.data) {
+        writeError(`Invalid event id: ${options.id}`, options.json);
+        process.exit(1);
+      }
+      targetEvent = targetResult.data;
+      if (targetEvent.IsCancelled) {
+        writeError('Cannot update a cancelled event.', options.json);
+        process.exit(1);
+      }
+      if (!targetEvent.IsOrganizer) {
+        writeError('Cannot update an event you did not organize.', options.json);
+        process.exit(1);
+      }
+    }
     if (!options.id) {
-      console.error('Please specify the event id with --id.');
-      console.error('Run `clippy update-event` to list events and IDs.');
-      process.exit(1);
+      const index = Number.parseInt(eventIndex || '', 10) - 1;
+      if (!Number.isInteger(index) || index < 0 || index >= events.length) {
+        writeError(`Invalid event index: ${eventIndex}`, options.json);
+        process.exit(1);
+      }
+      targetEvent = events[index];
     }
 
-    const targetEvent = events.find(e => e.Id === options.id);
     if (!targetEvent) {
-      console.error(`Invalid event id: ${options.id}`);
+      writeError('No event selected.', options.json);
       process.exit(1);
     }
 
     // Check if any update options were provided
     const hasUpdates = options.title || options.description || options.start ||
       options.end || options.addAttendee.length > 0 || options.room ||
-      options.location || options.teams !== undefined;
+      options.location || requestedShowAs !== undefined || options.teams !== undefined;
 
     if (!hasUpdates) {
       // Show current event details
       console.log(`\nEvent: ${targetEvent.Subject}`);
       console.log(`  When: ${formatDate(targetEvent.Start.DateTime)} ${formatTime(targetEvent.Start.DateTime)} - ${formatTime(targetEvent.End.DateTime)}`);
+      console.log(`  Show as: ${formatShowAs(targetEvent.ShowAs)}`);
       if (targetEvent.Location?.DisplayName) {
         console.log(`  Location: ${targetEvent.Location.DisplayName}`);
       }
@@ -216,7 +310,7 @@ export const updateEventCommand = new Command('update-event')
           console.log(`    - ${a.EmailAddress?.Address}${typeLabel}`);
         }
       }
-      console.log('\nUse options like --title, --add-attendee, --room to update.');
+      console.log('\nUse options like --title, --add-attendee, --room, or --show-as to update.');
       return;
     }
 
@@ -252,6 +346,10 @@ export const updateEventCommand = new Command('update-event')
     // Handle location
     if (options.location) {
       updateOptions.location = options.location;
+    }
+
+    if (requestedShowAs) {
+      updateOptions.showAs = requestedShowAs;
     }
 
     // Handle room
@@ -335,18 +433,23 @@ export const updateEventCommand = new Command('update-event')
       console.log(JSON.stringify({
         success: true,
         event: {
-          id: updateResult.data?.Id,
-          subject: updateResult.data?.Subject,
-          start: updateResult.data?.Start.DateTime,
-          end: updateResult.data?.End.DateTime,
+          id: updateResult.data?.Id || targetEvent.Id,
+          subject: updateResult.data?.Subject || targetEvent.Subject,
+          start: updateResult.data?.Start.DateTime || targetEvent.Start.DateTime,
+          end: updateResult.data?.End.DateTime || targetEvent.End.DateTime,
+          showAs: updateResult.data?.ShowAs || requestedShowAs || targetEvent.ShowAs,
         },
       }, null, 2));
     } else {
       console.log('\n\u2713 Event updated successfully.\n');
-      if (updateResult.data) {
-        console.log(`  Title: ${updateResult.data.Subject}`);
-        console.log(`  When:  ${formatDate(updateResult.data.Start.DateTime)} ${formatTime(updateResult.data.Start.DateTime)} - ${formatTime(updateResult.data.End.DateTime)}`);
-      }
+      const resultSubject = updateResult.data?.Subject || targetEvent.Subject;
+      const resultStart = updateResult.data?.Start.DateTime || targetEvent.Start.DateTime;
+      const resultEnd = updateResult.data?.End.DateTime || targetEvent.End.DateTime;
+      const resultShowAs = updateResult.data?.ShowAs || requestedShowAs || targetEvent.ShowAs;
+
+      console.log(`  Title: ${resultSubject}`);
+      console.log(`  When:  ${formatDate(resultStart)} ${formatTime(resultStart)} - ${formatTime(resultEnd)}`);
+      console.log(`  Show as: ${formatShowAs(resultShowAs)}`);
       console.log('');
     }
   });

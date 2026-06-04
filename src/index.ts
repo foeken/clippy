@@ -16,6 +16,7 @@ export {
 export type {
   OwaResponse, OwaError, OwaUserInfo,
   CalendarEvent, CalendarAttendee, CreatedEvent, CreateEventOptions, UpdateEventOptions,
+  CalendarShowAs,
   EmailMessage, EmailListResponse, GetEmailsOptions, EmailAttachment,
   MailFolder, MailFolderListResponse,
   Attachment, AttachmentListResponse,

@@ -129,12 +129,19 @@ clippy create-event "Sprint Planning" 09:00 11:00 \
 # List today's events
 clippy update-event
 
+# Update by event number from the list
+clippy update-event 1 --busy
+clippy update-event 1 --free
+
 # Update by event ID
 clippy update-event --id <eventId> --title "New Title"
 clippy update-event --id <eventId> --start 10:00 --end 11:00
 clippy update-event --id <eventId> --add-attendee "new@company.com"
 clippy update-event --id <eventId> --room "Room B"
 clippy update-event --id <eventId> --location "Off-site"
+clippy update-event --id <eventId> --show-as busy
+clippy update-event --id <eventId> --free        # Mark available
+clippy update-event --id <eventId> --busy        # Mark unavailable
 clippy update-event --id <eventId> --teams        # Add Teams meeting
 clippy update-event --id <eventId> --no-teams     # Remove Teams meeting
 

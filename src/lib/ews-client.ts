@@ -174,6 +174,8 @@ export interface CalendarEvent {
   WebLink?: string;
 }
 
+export type CalendarShowAs = 'Free' | 'Tentative' | 'Busy' | 'OOF' | 'WorkingElsewhere';
+
 export interface RecurrencePattern {
   Type: 'Daily' | 'Weekly' | 'AbsoluteMonthly' | 'RelativeMonthly' | 'AbsoluteYearly' | 'RelativeYearly';
   Interval: number;
@@ -212,6 +214,7 @@ export interface CreatedEvent {
   Subject: string;
   Start: { DateTime: string; TimeZone: string };
   End: { DateTime: string; TimeZone: string };
+  ShowAs?: CalendarShowAs;
   WebLink?: string;
   OnlineMeetingUrl?: string;
 }
@@ -226,6 +229,7 @@ export interface UpdateEventOptions {
   location?: string;
   attendees?: Array<{ email: string; name?: string; type?: 'Required' | 'Optional' | 'Resource' }>;
   isOnlineMeeting?: boolean;
+  showAs?: CalendarShowAs;
 }
 
 export interface ScheduleInfo {
@@ -759,7 +763,7 @@ export async function createEvent(options: CreateEventOptions): Promise<OwaRespo
 
 export async function updateEvent(options: UpdateEventOptions): Promise<OwaResponse<CreatedEvent>> {
   try {
-    const { token, eventId, subject, start, end, body, location, attendees, isOnlineMeeting } = options;
+    const { token, eventId, subject, start, end, body, location, attendees, isOnlineMeeting, showAs } = options;
 
     const updates: string[] = [];
 
@@ -777,6 +781,9 @@ export async function updateEvent(options: UpdateEventOptions): Promise<OwaRespo
     }
     if (location !== undefined) {
       updates.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:Location" /><t:CalendarItem><t:Location>${xmlEscape(location)}</t:Location></t:CalendarItem></t:SetItemField>`);
+    }
+    if (showAs !== undefined) {
+      updates.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" /><t:CalendarItem><t:LegacyFreeBusyStatus>${xmlEscape(showAs)}</t:LegacyFreeBusyStatus></t:CalendarItem></t:SetItemField>`);
     }
     if (attendees !== undefined) {
       const required = attendees.filter(a => (a.type || 'Required') !== 'Optional' && a.type !== 'Resource');
@@ -827,6 +834,7 @@ export async function updateEvent(options: UpdateEventOptions): Promise<OwaRespo
       Subject: subject || '',
       Start: { DateTime: start || '', TimeZone: 'UTC' },
       End: { DateTime: end || '', TimeZone: 'UTC' },
+      ShowAs: showAs,
     });
   } catch (err) {
     return ewsError(err);
