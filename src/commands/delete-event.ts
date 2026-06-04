@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { getCalendarEvents, deleteEvent, cancelEvent } from '../lib/ews-client.js';
+import { getCalendarEvent, getCalendarEvents, deleteEvent, cancelEvent, type CalendarEvent } from '../lib/ews-client.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -27,6 +27,14 @@ function parseDay(day: string): Date {
     default:
       const parsed = new Date(day);
       return isNaN(parsed.getTime()) ? now : parsed;
+  }
+}
+
+function writeError(message: string, json?: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ error: message }, null, 2));
+  } else {
+    console.error(`Error: ${message}`);
   }
 }
 
@@ -63,38 +71,34 @@ export const deleteEventCommand = new Command('delete-event')
       process.exit(1);
     }
 
-    // Get events for the day
-    const baseDate = parseDay(options.day);
-    const startOfDay = new Date(baseDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(baseDate);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const result = await getCalendarEvents(
-      authResult.token!,
-      startOfDay.toISOString(),
-      endOfDay.toISOString()
-    );
-
-    if (!result.ok || !result.data) {
-      if (options.json) {
-        console.log(JSON.stringify({ error: result.error?.message || 'Failed to fetch events' }, null, 2));
-      } else {
-        console.error(`Error: ${result.error?.message || 'Failed to fetch events'}`);
-      }
-      process.exit(1);
-    }
-
-    // Filter to events the user owns (IsOrganizer) and optionally by search
-    let events = result.data.filter(e => e.IsOrganizer && !e.IsCancelled);
-
-    if (options.search) {
-      const searchLower = options.search.toLowerCase();
-      events = events.filter(e => e.Subject?.toLowerCase().includes(searchLower));
-    }
-
     // If no id provided, list events
     if (!options.id) {
+      // Get events for the day
+      const baseDate = parseDay(options.day);
+      const startOfDay = new Date(baseDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(baseDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const result = await getCalendarEvents(
+        authResult.token!,
+        startOfDay.toISOString(),
+        endOfDay.toISOString()
+      );
+
+      if (!result.ok || !result.data) {
+        writeError(result.error?.message || 'Failed to fetch events', options.json);
+        process.exit(1);
+      }
+
+      // Filter to events the user owns (IsOrganizer) and optionally by search
+      let events = result.data.filter(e => e.IsOrganizer && !e.IsCancelled);
+
+      if (options.search) {
+        const searchLower = options.search.toLowerCase();
+        events = events.filter(e => e.Subject?.toLowerCase().includes(searchLower));
+      }
+
       if (options.json) {
         console.log(JSON.stringify({
           events: events.map((e, i) => ({
@@ -145,16 +149,19 @@ export const deleteEventCommand = new Command('delete-event')
       return;
     }
 
-    // Delete the specified event by ID
-    if (!options.id) {
-      console.error('Please specify the event id with --id.');
-      console.error('Run `clippy delete-event` to list events and IDs.');
+    const targetResult = await getCalendarEvent(authResult.token!, options.id);
+    if (!targetResult.ok || !targetResult.data) {
+      writeError(targetResult.error?.message || `Event not found: ${options.id}`, options.json);
       process.exit(1);
     }
 
-    const targetEvent = events.find(e => e.Id === options.id);
-    if (!targetEvent) {
-      console.error(`Invalid event id: ${options.id}`);
+    const targetEvent: CalendarEvent = targetResult.data;
+    if (targetEvent.IsCancelled) {
+      writeError(`Cannot delete/cancel an already cancelled event: ${targetEvent.Subject}`, options.json);
+      process.exit(1);
+    }
+    if (!targetEvent.IsOrganizer) {
+      writeError('Cannot delete/cancel an event you do not organize. Use `clippy respond decline --id <eventId>` instead.', options.json);
       process.exit(1);
     }
 
@@ -164,16 +171,20 @@ export const deleteEventCommand = new Command('delete-event')
     ) || [];
     const hasAttendees = attendees.length > 0;
 
-    console.log(`\nDeleting: ${targetEvent.Subject}`);
-    console.log(`  ${formatDate(targetEvent.Start.DateTime)} ${formatTime(targetEvent.Start.DateTime)} - ${formatTime(targetEvent.End.DateTime)}`);
+    if (!options.json) {
+      console.log(`\nDeleting: ${targetEvent.Subject}`);
+      console.log(`  ${formatDate(targetEvent.Start.DateTime)} ${formatTime(targetEvent.Start.DateTime)} - ${formatTime(targetEvent.End.DateTime)}`);
+    }
 
     let deleteResult;
     let action: string;
 
     if (hasAttendees && !options.forceDelete) {
       // Use cancel to send cancellation notices
-      console.log(`  Attendees: ${attendees.map(a => a.EmailAddress?.Address).join(', ')}`);
-      console.log(`  Sending cancellation notices...`);
+      if (!options.json) {
+        console.log(`  Attendees: ${attendees.map(a => a.EmailAddress?.Address).join(', ')}`);
+        console.log(`  Sending cancellation notices...`);
+      }
       deleteResult = await cancelEvent(authResult.token!, targetEvent.Id, options.message);
       action = 'cancelled';
     } else {
