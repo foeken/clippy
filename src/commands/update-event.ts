@@ -69,6 +69,16 @@ function formatShowAs(showAs?: string): string {
   }
 }
 
+function formatReminder(event: { reminderIsSet?: boolean; reminderMinutesBeforeStart?: number }): string {
+  if (event.reminderIsSet === false) return 'off';
+  if (event.reminderIsSet === true) {
+    return event.reminderMinutesBeforeStart !== undefined
+      ? `${event.reminderMinutesBeforeStart} minutes before`
+      : 'on';
+  }
+  return 'unknown';
+}
+
 function parseShowAs(value: string): CalendarShowAs | undefined {
   const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, '-');
   const aliases: Record<string, CalendarShowAs> = {
@@ -107,6 +117,31 @@ function resolveShowAs(options: { showAs?: string; free?: boolean; busy?: boolea
   return unique[0];
 }
 
+function resolveReminder(options: { reminder?: string | false }): {
+  hasReminderUpdate: boolean;
+  reminderIsSet?: boolean;
+  reminderMinutesBeforeStart?: number;
+} {
+  if (options.reminder === undefined) {
+    return { hasReminderUpdate: false };
+  }
+
+  if (options.reminder === false) {
+    return { hasReminderUpdate: true, reminderIsSet: false };
+  }
+
+  const value = options.reminder.trim();
+  if (!/^\d+$/.test(value)) {
+    throw new Error('Invalid --reminder value. Use a non-negative number of minutes.');
+  }
+
+  return {
+    hasReminderUpdate: true,
+    reminderIsSet: true,
+    reminderMinutesBeforeStart: Number.parseInt(value, 10),
+  };
+}
+
 function writeError(message: string, json?: boolean): void {
   if (json) {
     console.log(JSON.stringify({ error: message }, null, 2));
@@ -130,6 +165,8 @@ export const updateEventCommand = new Command('update-event')
   .option('--show-as <status>', 'Set availability: free, busy, tentative, oof, working-elsewhere')
   .option('--free', 'Shortcut for --show-as free')
   .option('--busy', 'Shortcut for --show-as busy')
+  .option('--reminder <minutes>', 'Set a reminder this many minutes before the event')
+  .option('--no-reminder', 'Clear/disable the event reminder')
   .option('--teams', 'Make it a Teams meeting')
   .option('--no-teams', 'Remove Teams meeting')
   .option('--json', 'Output as JSON')
@@ -147,15 +184,18 @@ export const updateEventCommand = new Command('update-event')
     showAs?: string;
     free?: boolean;
     busy?: boolean;
+    reminder?: string | false;
     teams?: boolean;
     json?: boolean;
     token?: string;
   }) => {
     let requestedShowAs: CalendarShowAs | undefined;
+    let requestedReminder: ReturnType<typeof resolveReminder>;
     try {
       requestedShowAs = resolveShowAs(options);
+      requestedReminder = resolveReminder(options);
     } catch (err) {
-      writeError(err instanceof Error ? err.message : 'Invalid availability option', options.json);
+      writeError(err instanceof Error ? err.message : 'Invalid update option', options.json);
       process.exit(1);
     }
 
@@ -195,8 +235,8 @@ export const updateEventCommand = new Command('update-event')
       process.exit(1);
     }
 
-    // Filter to events the user owns
-    const events = result.data.filter(e => e.IsOrganizer && !e.IsCancelled);
+    // Include attendee-owned copies so reminder-only updates can target them.
+    const events = result.data.filter(e => !e.IsCancelled);
 
     // If no target provided, list events
     if (!options.id && !eventIndex) {
@@ -209,6 +249,9 @@ export const updateEventCommand = new Command('update-event')
             start: e.Start.DateTime,
             end: e.End.DateTime,
             showAs: e.ShowAs,
+            isOrganizer: e.IsOrganizer,
+            reminderIsSet: e.reminderIsSet,
+            reminderMinutesBeforeStart: e.reminderMinutesBeforeStart,
             attendees: e.Attendees?.map(a => a.EmailAddress?.Address),
           })),
         }, null, 2));
@@ -219,8 +262,7 @@ export const updateEventCommand = new Command('update-event')
       console.log('\u2500'.repeat(60));
 
       if (events.length === 0) {
-        console.log('\n  No events found that you can update.');
-        console.log('  (You can only update events you organized)\n');
+        console.log('\n  No events found.\n');
         return;
       }
 
@@ -232,6 +274,10 @@ export const updateEventCommand = new Command('update-event')
         console.log(`\n  [${i + 1}] ${event.Subject}`);
         console.log(`      ${startTime} - ${endTime}`);
         console.log(`      Show as: ${formatShowAs(event.ShowAs)}`);
+        console.log(`      Reminder: ${formatReminder(event)}`);
+        if (!event.IsOrganizer) {
+          console.log('      Meeting edits: organizer only; reminder updates allowed');
+        }
         console.log(`      ID: ${event.Id}`);
         if (event.Location?.DisplayName) {
           console.log(`      Location: ${event.Location.DisplayName}`);
@@ -254,6 +300,8 @@ export const updateEventCommand = new Command('update-event')
       console.log('  clippy update-event <number> --room "Taxi"');
       console.log('  clippy update-event <number> --start 14:00 --end 15:00');
       console.log('  clippy update-event <number> --show-as busy');
+      console.log('  clippy update-event <number> --reminder 30');
+      console.log('  clippy update-event <number> --no-reminder');
       console.log('');
       return;
     }
@@ -269,10 +317,6 @@ export const updateEventCommand = new Command('update-event')
       targetEvent = targetResult.data;
       if (targetEvent.IsCancelled) {
         writeError('Cannot update a cancelled event.', options.json);
-        process.exit(1);
-      }
-      if (!targetEvent.IsOrganizer) {
-        writeError('Cannot update an event you did not organize.', options.json);
         process.exit(1);
       }
     }
@@ -291,15 +335,17 @@ export const updateEventCommand = new Command('update-event')
     }
 
     // Check if any update options were provided
-    const hasUpdates = options.title || options.description || options.start ||
+    const hasOrganizerUpdates = options.title || options.description || options.start ||
       options.end || options.addAttendee.length > 0 || options.room ||
       options.location || requestedShowAs !== undefined || options.teams !== undefined;
+    const hasUpdates = hasOrganizerUpdates || requestedReminder.hasReminderUpdate;
 
     if (!hasUpdates) {
       // Show current event details
       console.log(`\nEvent: ${targetEvent.Subject}`);
       console.log(`  When: ${formatDate(targetEvent.Start.DateTime)} ${formatTime(targetEvent.Start.DateTime)} - ${formatTime(targetEvent.End.DateTime)}`);
       console.log(`  Show as: ${formatShowAs(targetEvent.ShowAs)}`);
+      console.log(`  Reminder: ${formatReminder(targetEvent)}`);
       if (targetEvent.Location?.DisplayName) {
         console.log(`  Location: ${targetEvent.Location.DisplayName}`);
       }
@@ -310,8 +356,13 @@ export const updateEventCommand = new Command('update-event')
           console.log(`    - ${a.EmailAddress?.Address}${typeLabel}`);
         }
       }
-      console.log('\nUse options like --title, --add-attendee, --room, or --show-as to update.');
+      console.log('\nUse options like --title, --add-attendee, --room, --show-as, or --reminder to update.');
       return;
+    }
+
+    if (hasOrganizerUpdates && !targetEvent.IsOrganizer) {
+      writeError('Cannot update organizer-controlled fields on an event you did not organize. Reminder-only updates are allowed.', options.json);
+      process.exit(1);
     }
 
     // Build update payload
@@ -350,6 +401,11 @@ export const updateEventCommand = new Command('update-event')
 
     if (requestedShowAs) {
       updateOptions.showAs = requestedShowAs;
+    }
+
+    if (requestedReminder.hasReminderUpdate) {
+      updateOptions.reminderIsSet = requestedReminder.reminderIsSet;
+      updateOptions.reminderMinutesBeforeStart = requestedReminder.reminderMinutesBeforeStart;
     }
 
     // Handle room
@@ -438,6 +494,8 @@ export const updateEventCommand = new Command('update-event')
           start: updateResult.data?.Start.DateTime || targetEvent.Start.DateTime,
           end: updateResult.data?.End.DateTime || targetEvent.End.DateTime,
           showAs: updateResult.data?.ShowAs || requestedShowAs || targetEvent.ShowAs,
+          reminderIsSet: updateResult.data?.reminderIsSet ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderIsSet : targetEvent.reminderIsSet),
+          reminderMinutesBeforeStart: updateResult.data?.reminderMinutesBeforeStart ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderMinutesBeforeStart : targetEvent.reminderMinutesBeforeStart),
         },
       }, null, 2));
     } else {
@@ -446,10 +504,13 @@ export const updateEventCommand = new Command('update-event')
       const resultStart = updateResult.data?.Start.DateTime || targetEvent.Start.DateTime;
       const resultEnd = updateResult.data?.End.DateTime || targetEvent.End.DateTime;
       const resultShowAs = updateResult.data?.ShowAs || requestedShowAs || targetEvent.ShowAs;
+      const resultReminderIsSet = updateResult.data?.reminderIsSet ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderIsSet : targetEvent.reminderIsSet);
+      const resultReminderMinutes = updateResult.data?.reminderMinutesBeforeStart ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderMinutesBeforeStart : targetEvent.reminderMinutesBeforeStart);
 
       console.log(`  Title: ${resultSubject}`);
       console.log(`  When:  ${formatDate(resultStart)} ${formatTime(resultStart)} - ${formatTime(resultEnd)}`);
       console.log(`  Show as: ${formatShowAs(resultShowAs)}`);
+      console.log(`  Reminder: ${formatReminder({ reminderIsSet: resultReminderIsSet, reminderMinutesBeforeStart: resultReminderMinutes })}`);
       console.log('');
     }
   });

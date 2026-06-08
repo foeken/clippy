@@ -91,7 +91,11 @@ clippy create-event "Project Review" 14:00 15:00 \
   --description "Q1 review meeting" \
   --attendees "alice@company.com,bob@company.com" \
   --teams \
+  --reminder 15 \
   --room "Conference Room A"
+
+# Create with reminders disabled
+clippy create-event "Focus Block" 10:00 11:00 --no-reminder
 
 # Find an available room automatically
 clippy create-event "Workshop" 10:00 12:00 --find-room
@@ -142,8 +146,13 @@ clippy update-event --id <eventId> --location "Off-site"
 clippy update-event --id <eventId> --show-as busy
 clippy update-event --id <eventId> --free        # Mark available
 clippy update-event --id <eventId> --busy        # Mark unavailable
+clippy update-event --id <eventId> --reminder 30 # Remind 30 minutes before
+clippy update-event --id <eventId> --no-reminder # Disable reminders
 clippy update-event --id <eventId> --teams        # Add Teams meeting
 clippy update-event --id <eventId> --no-teams     # Remove Teams meeting
+
+# Reminder-only updates also work on attendee copies when Exchange allows it
+clippy update-event --id <eventId> --reminder 30
 
 # Show events from a specific day
 clippy update-event --day tomorrow

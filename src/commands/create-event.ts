@@ -79,6 +79,49 @@ function parseDay(day: string): Date {
   }
 }
 
+function formatReminder(event: { reminderIsSet?: boolean; reminderMinutesBeforeStart?: number }): string {
+  if (event.reminderIsSet === false) return 'off';
+  if (event.reminderIsSet === true) {
+    return event.reminderMinutesBeforeStart !== undefined
+      ? `${event.reminderMinutesBeforeStart} minutes before`
+      : 'on';
+  }
+  return 'unknown';
+}
+
+function resolveReminder(options: { reminder?: string | false }): {
+  hasReminderSetting: boolean;
+  reminderIsSet?: boolean;
+  reminderMinutesBeforeStart?: number;
+} {
+  if (options.reminder === undefined) {
+    return { hasReminderSetting: false };
+  }
+
+  if (options.reminder === false) {
+    return { hasReminderSetting: true, reminderIsSet: false };
+  }
+
+  const value = options.reminder.trim();
+  if (!/^\d+$/.test(value)) {
+    throw new Error('Invalid --reminder value. Use a non-negative number of minutes.');
+  }
+
+  return {
+    hasReminderSetting: true,
+    reminderIsSet: true,
+    reminderMinutesBeforeStart: Number.parseInt(value, 10),
+  };
+}
+
+function writeError(message: string, json?: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ error: message }, null, 2));
+  } else {
+    console.error(`Error: ${message}`);
+  }
+}
+
 export const createEventCommand = new Command('create-event')
   .description('Create a new calendar event')
   .argument('<title>', 'Event title/subject')
@@ -89,6 +132,8 @@ export const createEventCommand = new Command('create-event')
   .option('--attendees <emails>', 'Comma-separated list of attendee emails')
   .option('--room <room>', 'Meeting room (use --list-rooms to see available)')
   .option('--teams', 'Create as Teams meeting')
+  .option('--reminder <minutes>', 'Set a reminder this many minutes before the event')
+  .option('--no-reminder', 'Create the event with reminders disabled')
   .option('--list-rooms', 'List available meeting rooms')
   .option('--find-room', 'Find an available room for the time slot')
   .option('--repeat <type>', 'Recurrence: daily, weekly, monthly, yearly')
@@ -104,6 +149,7 @@ export const createEventCommand = new Command('create-event')
     attendees?: string;
     room?: string;
     teams?: boolean;
+    reminder?: string | false;
     listRooms?: boolean;
     findRoom?: boolean;
     repeat?: string;
@@ -114,6 +160,14 @@ export const createEventCommand = new Command('create-event')
     json?: boolean;
     token?: string;
   }) => {
+    let requestedReminder: ReturnType<typeof resolveReminder>;
+    try {
+      requestedReminder = resolveReminder(options);
+    } catch (err) {
+      writeError(err instanceof Error ? err.message : 'Invalid reminder option', options.json);
+      process.exit(1);
+    }
+
     const authResult = await resolveAuth({
       token: options.token,
     });
@@ -327,6 +381,8 @@ export const createEventCommand = new Command('create-event')
       attendees: attendees.length > 0 ? attendees : undefined,
       isOnlineMeeting: options.teams,
       recurrence,
+      reminderIsSet: requestedReminder.reminderIsSet,
+      reminderMinutesBeforeStart: requestedReminder.reminderMinutesBeforeStart,
     });
 
     if (!result.ok || !result.data) {
@@ -348,6 +404,8 @@ export const createEventCommand = new Command('create-event')
           end: result.data.End.DateTime,
           webLink: result.data.WebLink,
           onlineMeetingUrl: result.data.OnlineMeetingUrl,
+          reminderIsSet: result.data.reminderIsSet,
+          reminderMinutesBeforeStart: result.data.reminderMinutesBeforeStart,
           recurring: !!recurrence,
           recurrence: recurrence ? {
             type: recurrence.Pattern.Type,
@@ -365,6 +423,9 @@ export const createEventCommand = new Command('create-event')
     console.log('\n\u2713 Event created successfully!\n');
     console.log(`  Title: ${result.data.Subject}`);
     console.log(`  When:  ${formatDate(result.data.Start.DateTime)} ${formatTime(result.data.Start.DateTime)} - ${formatTime(result.data.End.DateTime)}`);
+    if (requestedReminder.hasReminderSetting) {
+      console.log(`  Reminder: ${formatReminder(result.data)}`);
+    }
 
     if (roomName) {
       console.log(`  Room:  ${roomName}`);

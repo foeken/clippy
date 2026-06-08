@@ -172,6 +172,8 @@ export interface CalendarEvent {
   IsOnlineMeeting?: boolean;
   OnlineMeetingUrl?: string;
   WebLink?: string;
+  reminderIsSet?: boolean;
+  reminderMinutesBeforeStart?: number;
 }
 
 export type CalendarShowAs = 'Free' | 'Tentative' | 'Busy' | 'OOF' | 'WorkingElsewhere';
@@ -207,6 +209,8 @@ export interface CreateEventOptions {
   attendees?: Array<{ email: string; name?: string; type?: 'Required' | 'Optional' | 'Resource' }>;
   isOnlineMeeting?: boolean;
   recurrence?: Recurrence;
+  reminderIsSet?: boolean;
+  reminderMinutesBeforeStart?: number;
 }
 
 export interface CreatedEvent {
@@ -217,6 +221,8 @@ export interface CreatedEvent {
   ShowAs?: CalendarShowAs;
   WebLink?: string;
   OnlineMeetingUrl?: string;
+  reminderIsSet?: boolean;
+  reminderMinutesBeforeStart?: number;
 }
 
 export interface UpdateEventOptions {
@@ -230,6 +236,8 @@ export interface UpdateEventOptions {
   attendees?: Array<{ email: string; name?: string; type?: 'Required' | 'Optional' | 'Resource' }>;
   isOnlineMeeting?: boolean;
   showAs?: CalendarShowAs;
+  reminderIsSet?: boolean;
+  reminderMinutesBeforeStart?: number;
 }
 
 export interface ScheduleInfo {
@@ -406,6 +414,9 @@ function parseCalendarItem(block: string, includeFullBody = false): CalendarEven
   const bodyType = extractAttribute(block, 'Body', 'BodyType') || 'Text';
   const importance = extractTag(block, 'Importance') || 'Normal';
   const showAs = extractTag(block, 'LegacyFreeBusyStatus') || 'Busy';
+  const reminderIsSetValue = extractTag(block, 'ReminderIsSet') || extractTag(block, 'IsReminderSet');
+  const reminderMinutesValue = extractTag(block, 'ReminderMinutesBeforeStart');
+  const reminderMinutes = reminderMinutesValue ? Number.parseInt(reminderMinutesValue, 10) : undefined;
 
   // Organizer
   const organizerBlock = extractSelfClosingOrBlock(block, 'Organizer');
@@ -473,6 +484,8 @@ function parseCalendarItem(block: string, includeFullBody = false): CalendarEven
     Categories: categories.length > 0 ? categories : undefined,
     ShowAs: showAs,
     Importance: importance,
+    reminderIsSet: reminderIsSetValue ? reminderIsSetValue.toLowerCase() === 'true' : undefined,
+    reminderMinutesBeforeStart: Number.isFinite(reminderMinutes) ? reminderMinutes : undefined,
   };
 }
 
@@ -647,6 +660,8 @@ export async function getCalendarEvents(
           <t:FieldURI FieldURI="calendar:MyResponseType" />
           <t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" />
           <t:FieldURI FieldURI="item:Importance" />
+          <t:FieldURI FieldURI="item:ReminderIsSet" />
+          <t:FieldURI FieldURI="item:ReminderMinutesBeforeStart" />
           <t:FieldURI FieldURI="item:TextBody" />
         </t:AdditionalProperties>
       </m:ItemShape>
@@ -688,6 +703,8 @@ export async function getCalendarEvent(
           <t:FieldURI FieldURI="calendar:MyResponseType" />
           <t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" />
           <t:FieldURI FieldURI="item:Importance" />
+          <t:FieldURI FieldURI="item:ReminderIsSet" />
+          <t:FieldURI FieldURI="item:ReminderMinutesBeforeStart" />
           <t:FieldURI FieldURI="item:Body" />
           <t:FieldURI FieldURI="item:TextBody" />
         </t:AdditionalProperties>
@@ -746,9 +763,48 @@ function buildRecurrenceXml(recurrence: Recurrence): string {
   return `<t:Recurrence>${patternXml}${rangeXml}</t:Recurrence>`;
 }
 
+function assertValidReminderMinutes(minutes: number): void {
+  if (!Number.isSafeInteger(minutes) || minutes < 0) {
+    throw new Error('Reminder minutes must be a non-negative integer.');
+  }
+}
+
+function resolveReminderCreateState(options: {
+  reminderIsSet?: boolean;
+  reminderMinutesBeforeStart?: number;
+}): { reminderIsSet?: boolean; reminderMinutesBeforeStart?: number } {
+  const { reminderIsSet, reminderMinutesBeforeStart } = options;
+  if (reminderMinutesBeforeStart !== undefined) {
+    assertValidReminderMinutes(reminderMinutesBeforeStart);
+    if (reminderIsSet === false) {
+      throw new Error('Cannot set reminder minutes when reminder is disabled.');
+    }
+    return { reminderIsSet: true, reminderMinutesBeforeStart };
+  }
+  return reminderIsSet !== undefined ? { reminderIsSet } : {};
+}
+
+function buildReminderCreateXml(options: {
+  reminderIsSet?: boolean;
+  reminderMinutesBeforeStart?: number;
+}): string {
+  const reminder = resolveReminderCreateState(options);
+  const parts: string[] = [];
+
+  if (reminder.reminderIsSet !== undefined) {
+    parts.push(`<t:ReminderIsSet>${reminder.reminderIsSet ? 'true' : 'false'}</t:ReminderIsSet>`);
+  }
+  if (reminder.reminderMinutesBeforeStart !== undefined) {
+    parts.push(`<t:ReminderMinutesBeforeStart>${reminder.reminderMinutesBeforeStart}</t:ReminderMinutesBeforeStart>`);
+  }
+
+  return parts.join('\n');
+}
+
 export async function createEvent(options: CreateEventOptions): Promise<OwaResponse<CreatedEvent>> {
   try {
     const { token, subject, start, end, body, location, attendees, isOnlineMeeting, recurrence } = options;
+    const reminder = resolveReminderCreateState(options);
 
     let attendeesXml = '';
     if (attendees && attendees.length > 0) {
@@ -787,6 +843,7 @@ export async function createEvent(options: CreateEventOptions): Promise<OwaRespo
           ${attendeesXml}
           ${isOnlineMeeting ? '<t:IsOnlineMeeting>true</t:IsOnlineMeeting>' : ''}
           ${recurrence ? buildRecurrenceXml(recurrence) : ''}
+          ${buildReminderCreateXml(reminder)}
         </t:CalendarItem>
       </m:Items>
     </m:CreateItem>`);
@@ -802,6 +859,7 @@ export async function createEvent(options: CreateEventOptions): Promise<OwaRespo
       End: { DateTime: end, TimeZone: 'UTC' },
       WebLink: undefined,
       OnlineMeetingUrl: undefined,
+      ...reminder,
     });
   } catch (err) {
     return ewsError(err);
@@ -810,7 +868,7 @@ export async function createEvent(options: CreateEventOptions): Promise<OwaRespo
 
 export async function updateEvent(options: UpdateEventOptions): Promise<OwaResponse<CreatedEvent>> {
   try {
-    const { token, eventId, subject, start, end, body, location, attendees, isOnlineMeeting, showAs } = options;
+    const { token, eventId, subject, start, end, body, location, attendees, isOnlineMeeting, showAs, reminderIsSet, reminderMinutesBeforeStart } = options;
 
     const updates: string[] = [];
 
@@ -831,6 +889,16 @@ export async function updateEvent(options: UpdateEventOptions): Promise<OwaRespo
     }
     if (showAs !== undefined) {
       updates.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" /><t:CalendarItem><t:LegacyFreeBusyStatus>${xmlEscape(showAs)}</t:LegacyFreeBusyStatus></t:CalendarItem></t:SetItemField>`);
+    }
+    if (reminderMinutesBeforeStart !== undefined) {
+      assertValidReminderMinutes(reminderMinutesBeforeStart);
+      if (reminderIsSet === false) {
+        throw new Error('Cannot set reminder minutes when reminder is disabled.');
+      }
+      updates.push(`<t:SetItemField><t:FieldURI FieldURI="item:ReminderIsSet" /><t:CalendarItem><t:ReminderIsSet>true</t:ReminderIsSet></t:CalendarItem></t:SetItemField>`);
+      updates.push(`<t:SetItemField><t:FieldURI FieldURI="item:ReminderMinutesBeforeStart" /><t:CalendarItem><t:ReminderMinutesBeforeStart>${reminderMinutesBeforeStart}</t:ReminderMinutesBeforeStart></t:CalendarItem></t:SetItemField>`);
+    } else if (reminderIsSet !== undefined) {
+      updates.push(`<t:SetItemField><t:FieldURI FieldURI="item:ReminderIsSet" /><t:CalendarItem><t:ReminderIsSet>${reminderIsSet ? 'true' : 'false'}</t:ReminderIsSet></t:CalendarItem></t:SetItemField>`);
     }
     if (attendees !== undefined) {
       const required = attendees.filter(a => (a.type || 'Required') !== 'Optional' && a.type !== 'Resource');
@@ -882,6 +950,8 @@ export async function updateEvent(options: UpdateEventOptions): Promise<OwaRespo
       Start: { DateTime: start || '', TimeZone: 'UTC' },
       End: { DateTime: end || '', TimeZone: 'UTC' },
       ShowAs: showAs,
+      reminderIsSet: reminderMinutesBeforeStart !== undefined ? true : reminderIsSet,
+      reminderMinutesBeforeStart,
     });
   } catch (err) {
     return ewsError(err);
