@@ -144,6 +144,7 @@ clippy update-event --id <eventId> --add-attendee "new@company.com"
 clippy update-event --id <eventId> --room "Room B"
 clippy update-event --id <eventId> --location "Off-site"
 clippy update-event --id <eventId> --show-as busy
+clippy update-event --id <eventId> --local-title "Jeroen - Andre"
 clippy update-event --id <eventId> --free        # Mark available
 clippy update-event --id <eventId> --busy        # Mark unavailable
 clippy update-event --id <eventId> --reminder 30 # Remind 30 minutes before
@@ -153,6 +154,9 @@ clippy update-event --id <eventId> --no-teams     # Remove Teams meeting
 
 # Reminder-only updates also work on attendee copies when Exchange allows it
 clippy update-event --id <eventId> --reminder 30
+
+# Local title updates only affect your mailbox copy and may be overwritten by organizer updates
+clippy update-event --id <eventId> --local-title "My title"
 
 # Show events from a specific day
 clippy update-event --day tomorrow

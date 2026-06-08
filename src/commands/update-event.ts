@@ -142,6 +142,12 @@ function resolveReminder(options: { reminder?: string | false }): {
   };
 }
 
+function validateTitleOptions(options: { title?: string; localTitle?: string }): void {
+  if (options.title && options.localTitle) {
+    throw new Error('Use only one of --title or --local-title.');
+  }
+}
+
 function writeError(message: string, json?: boolean): void {
   if (json) {
     console.log(JSON.stringify({ error: message }, null, 2));
@@ -156,6 +162,7 @@ export const updateEventCommand = new Command('update-event')
   .option('--id <eventId>', 'Update event by stable ID')
   .option('--day <day>', 'Day to show events from (today, tomorrow, YYYY-MM-DD)', 'today')
   .option('--title <text>', 'New title/subject')
+  .option('--local-title <text>', 'Set a local-only title on your calendar copy')
   .option('--description <text>', 'New description/body')
   .option('--start <time>', 'New start time (e.g., 14:00, 2pm)')
   .option('--end <time>', 'New end time (e.g., 15:00, 3pm)')
@@ -175,6 +182,7 @@ export const updateEventCommand = new Command('update-event')
     id?: string;
     day: string;
     title?: string;
+    localTitle?: string;
     description?: string;
     start?: string;
     end?: string;
@@ -192,6 +200,7 @@ export const updateEventCommand = new Command('update-event')
     let requestedShowAs: CalendarShowAs | undefined;
     let requestedReminder: ReturnType<typeof resolveReminder>;
     try {
+      validateTitleOptions(options);
       requestedShowAs = resolveShowAs(options);
       requestedReminder = resolveReminder(options);
     } catch (err) {
@@ -276,7 +285,7 @@ export const updateEventCommand = new Command('update-event')
         console.log(`      Show as: ${formatShowAs(event.ShowAs)}`);
         console.log(`      Reminder: ${formatReminder(event)}`);
         if (!event.IsOrganizer) {
-          console.log('      Meeting edits: organizer only; reminder updates allowed');
+          console.log('      Meeting edits: organizer only; reminder/local title updates allowed');
         }
         console.log(`      ID: ${event.Id}`);
         if (event.Location?.DisplayName) {
@@ -302,6 +311,7 @@ export const updateEventCommand = new Command('update-event')
       console.log('  clippy update-event <number> --show-as busy');
       console.log('  clippy update-event <number> --reminder 30');
       console.log('  clippy update-event <number> --no-reminder');
+      console.log('  clippy update-event <number> --local-title "My title"');
       console.log('');
       return;
     }
@@ -338,7 +348,8 @@ export const updateEventCommand = new Command('update-event')
     const hasOrganizerUpdates = options.title || options.description || options.start ||
       options.end || options.addAttendee.length > 0 || options.room ||
       options.location || requestedShowAs !== undefined || options.teams !== undefined;
-    const hasUpdates = hasOrganizerUpdates || requestedReminder.hasReminderUpdate;
+    const hasLocalTitleUpdate = options.localTitle !== undefined;
+    const hasUpdates = hasOrganizerUpdates || requestedReminder.hasReminderUpdate || hasLocalTitleUpdate;
 
     if (!hasUpdates) {
       // Show current event details
@@ -356,12 +367,17 @@ export const updateEventCommand = new Command('update-event')
           console.log(`    - ${a.EmailAddress?.Address}${typeLabel}`);
         }
       }
-      console.log('\nUse options like --title, --add-attendee, --room, --show-as, or --reminder to update.');
+      console.log('\nUse options like --title, --add-attendee, --room, --show-as, --reminder, or --local-title to update.');
       return;
     }
 
     if (hasOrganizerUpdates && !targetEvent.IsOrganizer) {
-      writeError('Cannot update organizer-controlled fields on an event you did not organize. Reminder-only updates are allowed.', options.json);
+      writeError('Cannot update organizer-controlled fields on an event you did not organize. Reminder and local-title updates are allowed.', options.json);
+      process.exit(1);
+    }
+
+    if (hasLocalTitleUpdate && targetEvent.IsOrganizer) {
+      writeError('Use --title for events you organize. --local-title is for attendee copies.', options.json);
       process.exit(1);
     }
 
@@ -373,6 +389,9 @@ export const updateEventCommand = new Command('update-event')
 
     if (options.title) {
       updateOptions.subject = options.title;
+    }
+    if (options.localTitle !== undefined) {
+      updateOptions.subject = options.localTitle;
     }
 
     if (options.description) {
@@ -472,7 +491,9 @@ export const updateEventCommand = new Command('update-event')
       updateOptions.isOnlineMeeting = options.teams;
     }
 
-    console.log(`\nUpdating: ${targetEvent.Subject}`);
+    if (!options.json) {
+      console.log(`\nUpdating: ${targetEvent.Subject}`);
+    }
 
     const updateResult = await updateEvent(updateOptions);
 
@@ -497,6 +518,11 @@ export const updateEventCommand = new Command('update-event')
           reminderIsSet: updateResult.data?.reminderIsSet ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderIsSet : targetEvent.reminderIsSet),
           reminderMinutesBeforeStart: updateResult.data?.reminderMinutesBeforeStart ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderMinutesBeforeStart : targetEvent.reminderMinutesBeforeStart),
         },
+        ...(hasLocalTitleUpdate ? {
+          warnings: [
+            'Local title updates only affect your mailbox copy and may be overwritten by organizer updates.',
+          ],
+        } : {}),
       }, null, 2));
     } else {
       console.log('\n\u2713 Event updated successfully.\n');
@@ -511,6 +537,9 @@ export const updateEventCommand = new Command('update-event')
       console.log(`  When:  ${formatDate(resultStart)} ${formatTime(resultStart)} - ${formatTime(resultEnd)}`);
       console.log(`  Show as: ${formatShowAs(resultShowAs)}`);
       console.log(`  Reminder: ${formatReminder({ reminderIsSet: resultReminderIsSet, reminderMinutesBeforeStart: resultReminderMinutes })}`);
+      if (hasLocalTitleUpdate) {
+        console.log('  Note: local title updates only affect your mailbox copy and may be overwritten by organizer updates.');
+      }
       console.log('');
     }
   });
