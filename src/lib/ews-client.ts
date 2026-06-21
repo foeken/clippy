@@ -592,7 +592,6 @@ const FOLDER_MAP: Record<string, string> = {
   junk: 'junkemail',
   spam: 'junkemail',
   outbox: 'outbox',
-  archive: 'archivemsgfolderoot',
 };
 
 function folderIdXml(folder: string): string {
@@ -601,6 +600,26 @@ function folderIdXml(folder: string): string {
     return `<t:DistinguishedFolderId Id="${distinguished}" />`;
   }
   return `<t:FolderId Id="${xmlEscape(folder)}" />`;
+}
+
+async function mailFolderIdXml(token: string, folder: string): Promise<string> {
+  if (folder.toLowerCase() !== 'archive') {
+    return folderIdXml(folder);
+  }
+
+  const foldersResult = await getMailFolders(token);
+  if (!foldersResult.ok || !foldersResult.data) {
+    throw new Error(foldersResult.error?.message || 'Failed to look up Archive folder');
+  }
+
+  const archiveFolder = foldersResult.data.value.find(
+    f => f.DisplayName.toLowerCase() === 'archive'
+  );
+  if (!archiveFolder) {
+    throw new Error('Folder "Archive" not found');
+  }
+
+  return `<t:FolderId Id="${xmlEscape(archiveFolder.Id)}" />`;
 }
 
 // ─── Session Validation ───
@@ -1088,6 +1107,7 @@ export async function getEmails(options: GetEmailsOptions): Promise<OwaResponse<
     }
 
     const queryStringXml = search ? `<m:QueryString>${xmlEscape(search)}</m:QueryString>` : '';
+    const parentFolderXml = await mailFolderIdXml(token, folder);
 
     const envelope = soapEnvelope(`
     <m:FindItem Traversal="Shallow">
@@ -1114,7 +1134,7 @@ export async function getEmails(options: GetEmailsOptions): Promise<OwaResponse<
       </m:SortOrder>` : ''}
       ${queryStringXml}
       <m:ParentFolderIds>
-        ${folderIdXml(folder)}
+        ${parentFolderXml}
       </m:ParentFolderIds>
     </m:FindItem>`);
 
@@ -1375,10 +1395,35 @@ export async function moveEmail(
   destinationFolder: string
 ): Promise<OwaResponse<EmailMessage>> {
   try {
+    const destinationFolderXml = await mailFolderIdXml(token, destinationFolder);
+    return await moveEmailWithDestinationXml(token, messageId, destinationFolderXml);
+  } catch (err) {
+    return ewsError(err);
+  }
+}
+
+export async function moveEmailToFolderId(
+  token: string,
+  messageId: string,
+  destinationFolderId: string
+): Promise<OwaResponse<EmailMessage>> {
+  return moveEmailWithDestinationXml(
+    token,
+    messageId,
+    `<t:FolderId Id="${xmlEscape(destinationFolderId)}" />`
+  );
+}
+
+async function moveEmailWithDestinationXml(
+  token: string,
+  messageId: string,
+  destinationFolderXml: string
+): Promise<OwaResponse<EmailMessage>> {
+  try {
     const envelope = soapEnvelope(`
     <m:MoveItem>
       <m:ToFolderId>
-        ${folderIdXml(destinationFolder)}
+        ${destinationFolderXml}
       </m:ToFolderId>
       <m:ItemIds>
         <t:ItemId Id="${xmlEscape(messageId)}" />

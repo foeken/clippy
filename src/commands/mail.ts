@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { getEmails, getEmail, getAttachments, getAttachment, updateEmail, moveEmail, getMailFolders, replyToEmail, replyToEmailDraft, forwardEmail } from '../lib/ews-client.js';
+import { getEmails, getEmail, getAttachments, getAttachment, updateEmail, moveEmail, moveEmailToFolderId, getMailFolders, replyToEmail, replyToEmailDraft, forwardEmail } from '../lib/ews-client.js';
 import { markdownToHtml } from '../lib/markdown.js';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
@@ -338,10 +338,10 @@ export const mailCommand = new Command('mail')
 
       const id = options.move.trim();
 
-      // Map folder names to API folder IDs
+      // Map folder names to EWS distinguished folder IDs. Archive is resolved
+      // by concrete folder ID below because that path works reliably in EWS.
       const destFolderMap: Record<string, string> = {
         inbox: 'inbox',
-        archive: 'archive',
         deleted: 'deleteditems',
         deleteditems: 'deleteditems',
         trash: 'deleteditems',
@@ -353,19 +353,21 @@ export const mailCommand = new Command('mail')
         sentitems: 'sentitems',
       };
 
-      let destFolder = destFolderMap[options.to.toLowerCase()];
+      const destination = options.to.trim();
+      let destFolder = destFolderMap[destination.toLowerCase()];
+      let destFolderId: string | undefined;
 
-      // If not a well-known folder, look up by name
+      // If not a well-known distinguished folder, look up by concrete folder ID.
       if (!destFolder) {
         const foldersResult = await getMailFolders(authResult.token!);
         if (foldersResult.ok && foldersResult.data) {
           const found = foldersResult.data.value.find(
-            f => f.DisplayName.toLowerCase() === options.to!.toLowerCase()
+            f => f.DisplayName.toLowerCase() === destination.toLowerCase()
           );
           if (found) {
-            destFolder = found.Id;
+            destFolderId = found.Id;
           } else {
-            console.error(`Folder "${options.to}" not found.`);
+            console.error(`Folder "${destination}" not found.`);
             console.error('Use "clippy folders" to see available folders.');
             process.exit(1);
           }
@@ -375,7 +377,9 @@ export const mailCommand = new Command('mail')
         }
       }
 
-      const result = await moveEmail(authResult.token!, id, destFolder);
+      const result = destFolderId
+        ? await moveEmailToFolderId(authResult.token!, id, destFolderId)
+        : await moveEmail(authResult.token!, id, destFolder);
 
       if (!result.ok) {
         console.error(`Error: ${result.error?.message || 'Failed to move email'}`);

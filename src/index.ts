@@ -5,7 +5,7 @@ export type { AuthResult } from './lib/auth.js';
 export {
   validateSession, getOwaUserInfo,
   getCalendarEvents, getCalendarEvent, createEvent, updateEvent, deleteEvent, cancelEvent, respondToEvent,
-  getEmails, getEmail, sendEmail, replyToEmail, replyToEmailDraft, forwardEmail, updateEmail, moveEmail,
+  getEmails, getEmail, sendEmail, replyToEmail, replyToEmailDraft, forwardEmail, updateEmail, moveEmail, moveEmailToFolderId,
   createDraft, updateDraft, sendDraftById, deleteDraftById, addAttachmentToDraft,
   getMailFolders, createMailFolder, updateMailFolder, deleteMailFolder,
   getAttachments, getAttachment,
