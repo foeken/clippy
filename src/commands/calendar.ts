@@ -163,6 +163,10 @@ function displayEvent(event: CalendarEvent, verbose: boolean): void {
       console.log(`     🏷️  ${event.Categories.join(', ')}`);
     }
 
+    if (event.Sensitivity && event.Sensitivity !== 'Normal') {
+      console.log(`     🔒 ${event.Sensitivity}`);
+    }
+
     // Show body preview if available
     if (event.BodyPreview) {
       const preview = event.BodyPreview.substring(0, 80).replace(/\n/g, ' ');

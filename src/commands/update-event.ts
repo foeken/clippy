@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { getCalendarEvents, updateEvent, searchRooms, getRooms, getCalendarEvent, type CalendarShowAs } from '../lib/ews-client.js';
+import { getCalendarEvents, updateEvent, searchRooms, getRooms, getCalendarEvent, type CalendarShowAs, type CalendarSensitivity } from '../lib/ews-client.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -142,6 +142,34 @@ function resolveReminder(options: { reminder?: string | false }): {
   };
 }
 
+function resolveSensitivity(options: { sensitivity?: string; private?: boolean; normal?: boolean }): CalendarSensitivity | undefined {
+  const requested = [
+    options.sensitivity !== undefined ? options.sensitivity : undefined,
+    options.private ? 'private' : undefined,
+    options.normal ? 'normal' : undefined,
+  ].filter((value): value is string => value !== undefined);
+
+  if (requested.length === 0) {
+    return undefined;
+  }
+  if (requested.length > 1) {
+    throw new Error('Use only one of --sensitivity, --private, or --normal.');
+  }
+
+  const normalized = requested[0].trim().toLowerCase();
+  const sensitivityMap: Record<string, CalendarSensitivity> = {
+    normal: 'Normal',
+    personal: 'Personal',
+    private: 'Private',
+    confidential: 'Confidential',
+  };
+  const sensitivity = sensitivityMap[normalized];
+  if (!sensitivity) {
+    throw new Error('Invalid sensitivity. Use normal, personal, private, or confidential.');
+  }
+  return sensitivity;
+}
+
 function validateTitleOptions(options: { title?: string; localTitle?: string }): void {
   if (options.title && options.localTitle) {
     throw new Error('Use only one of --title or --local-title.');
@@ -172,6 +200,9 @@ export const updateEventCommand = new Command('update-event')
   .option('--show-as <status>', 'Set availability: free, busy, tentative, oof, working-elsewhere')
   .option('--free', 'Shortcut for --show-as free')
   .option('--busy', 'Shortcut for --show-as busy')
+  .option('--sensitivity <sensitivity>', 'Set sensitivity: normal, personal, private, confidential')
+  .option('--private', 'Shortcut for --sensitivity private')
+  .option('--normal', 'Shortcut for --sensitivity normal')
   .option('--reminder <minutes>', 'Set a reminder this many minutes before the event')
   .option('--no-reminder', 'Clear/disable the event reminder')
   .option('--teams', 'Make it a Teams meeting')
@@ -192,6 +223,9 @@ export const updateEventCommand = new Command('update-event')
     showAs?: string;
     free?: boolean;
     busy?: boolean;
+    sensitivity?: string;
+    private?: boolean;
+    normal?: boolean;
     reminder?: string | false;
     teams?: boolean;
     json?: boolean;
@@ -199,10 +233,12 @@ export const updateEventCommand = new Command('update-event')
   }) => {
     let requestedShowAs: CalendarShowAs | undefined;
     let requestedReminder: ReturnType<typeof resolveReminder>;
+    let requestedSensitivity: CalendarSensitivity | undefined;
     try {
       validateTitleOptions(options);
       requestedShowAs = resolveShowAs(options);
       requestedReminder = resolveReminder(options);
+      requestedSensitivity = resolveSensitivity(options);
     } catch (err) {
       writeError(err instanceof Error ? err.message : 'Invalid update option', options.json);
       process.exit(1);
@@ -258,6 +294,7 @@ export const updateEventCommand = new Command('update-event')
             start: e.Start.DateTime,
             end: e.End.DateTime,
             showAs: e.ShowAs,
+            sensitivity: e.Sensitivity,
             isOrganizer: e.IsOrganizer,
             reminderIsSet: e.reminderIsSet,
             reminderMinutesBeforeStart: e.reminderMinutesBeforeStart,
@@ -283,6 +320,9 @@ export const updateEventCommand = new Command('update-event')
         console.log(`\n  [${i + 1}] ${event.Subject}`);
         console.log(`      ${startTime} - ${endTime}`);
         console.log(`      Show as: ${formatShowAs(event.ShowAs)}`);
+        if (event.Sensitivity && event.Sensitivity !== 'Normal') {
+          console.log(`      Sensitivity: ${event.Sensitivity}`);
+        }
         console.log(`      Reminder: ${formatReminder(event)}`);
         if (!event.IsOrganizer) {
           console.log('      Meeting edits: organizer only; reminder/local title updates allowed');
@@ -349,13 +389,15 @@ export const updateEventCommand = new Command('update-event')
       options.end || options.addAttendee.length > 0 || options.room ||
       options.location || requestedShowAs !== undefined || options.teams !== undefined;
     const hasLocalTitleUpdate = options.localTitle !== undefined;
-    const hasUpdates = hasOrganizerUpdates || requestedReminder.hasReminderUpdate || hasLocalTitleUpdate;
+    const hasSensitivityUpdate = requestedSensitivity !== undefined;
+    const hasUpdates = hasOrganizerUpdates || requestedReminder.hasReminderUpdate || hasLocalTitleUpdate || hasSensitivityUpdate;
 
     if (!hasUpdates) {
       // Show current event details
       console.log(`\nEvent: ${targetEvent.Subject}`);
       console.log(`  When: ${formatDate(targetEvent.Start.DateTime)} ${formatTime(targetEvent.Start.DateTime)} - ${formatTime(targetEvent.End.DateTime)}`);
       console.log(`  Show as: ${formatShowAs(targetEvent.ShowAs)}`);
+      console.log(`  Sensitivity: ${targetEvent.Sensitivity || 'Normal'}`);
       console.log(`  Reminder: ${formatReminder(targetEvent)}`);
       if (targetEvent.Location?.DisplayName) {
         console.log(`  Location: ${targetEvent.Location.DisplayName}`);
@@ -367,7 +409,7 @@ export const updateEventCommand = new Command('update-event')
           console.log(`    - ${a.EmailAddress?.Address}${typeLabel}`);
         }
       }
-      console.log('\nUse options like --title, --add-attendee, --room, --show-as, --reminder, or --local-title to update.');
+      console.log('\nUse options like --title, --add-attendee, --room, --show-as, --private, --reminder, or --local-title to update.');
       return;
     }
 
@@ -420,6 +462,10 @@ export const updateEventCommand = new Command('update-event')
 
     if (requestedShowAs) {
       updateOptions.showAs = requestedShowAs;
+    }
+
+    if (requestedSensitivity) {
+      updateOptions.sensitivity = requestedSensitivity;
     }
 
     if (requestedReminder.hasReminderUpdate) {
@@ -515,6 +561,7 @@ export const updateEventCommand = new Command('update-event')
           start: updateResult.data?.Start.DateTime || targetEvent.Start.DateTime,
           end: updateResult.data?.End.DateTime || targetEvent.End.DateTime,
           showAs: updateResult.data?.ShowAs || requestedShowAs || targetEvent.ShowAs,
+          sensitivity: updateResult.data?.Sensitivity || requestedSensitivity || targetEvent.Sensitivity,
           reminderIsSet: updateResult.data?.reminderIsSet ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderIsSet : targetEvent.reminderIsSet),
           reminderMinutesBeforeStart: updateResult.data?.reminderMinutesBeforeStart ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderMinutesBeforeStart : targetEvent.reminderMinutesBeforeStart),
         },
@@ -530,12 +577,14 @@ export const updateEventCommand = new Command('update-event')
       const resultStart = updateResult.data?.Start.DateTime || targetEvent.Start.DateTime;
       const resultEnd = updateResult.data?.End.DateTime || targetEvent.End.DateTime;
       const resultShowAs = updateResult.data?.ShowAs || requestedShowAs || targetEvent.ShowAs;
+      const resultSensitivity = updateResult.data?.Sensitivity || requestedSensitivity || targetEvent.Sensitivity || 'Normal';
       const resultReminderIsSet = updateResult.data?.reminderIsSet ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderIsSet : targetEvent.reminderIsSet);
       const resultReminderMinutes = updateResult.data?.reminderMinutesBeforeStart ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderMinutesBeforeStart : targetEvent.reminderMinutesBeforeStart);
 
       console.log(`  Title: ${resultSubject}`);
       console.log(`  When:  ${formatDate(resultStart)} ${formatTime(resultStart)} - ${formatTime(resultEnd)}`);
       console.log(`  Show as: ${formatShowAs(resultShowAs)}`);
+      console.log(`  Sensitivity: ${resultSensitivity}`);
       console.log(`  Reminder: ${formatReminder({ reminderIsSet: resultReminderIsSet, reminderMinutesBeforeStart: resultReminderMinutes })}`);
       if (hasLocalTitleUpdate) {
         console.log('  Note: local title updates only affect your mailbox copy and may be overwritten by organizer updates.');

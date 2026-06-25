@@ -94,6 +94,9 @@ clippy create-event "Project Review" 14:00 15:00 \
   --reminder 15 \
   --room "Conference Room A"
 
+# Create a private event
+clippy create-event "Prep notes" 08:30 09:00 --day tomorrow --private
+
 # Create with reminders disabled
 clippy create-event "Focus Block" 10:00 11:00 --no-reminder
 
@@ -147,6 +150,8 @@ clippy update-event --id <eventId> --show-as busy
 clippy update-event --id <eventId> --local-title "Jeroen - Andre"
 clippy update-event --id <eventId> --free        # Mark available
 clippy update-event --id <eventId> --busy        # Mark unavailable
+clippy update-event --id <eventId> --private     # Mark private
+clippy update-event --id <eventId> --normal      # Clear private sensitivity
 clippy update-event --id <eventId> --reminder 30 # Remind 30 minutes before
 clippy update-event --id <eventId> --no-reminder # Disable reminders
 clippy update-event --id <eventId> --teams        # Add Teams meeting

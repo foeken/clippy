@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { createEvent, getRooms, searchRooms, isRoomFree, Recurrence, RecurrencePattern, RecurrenceRange } from '../lib/ews-client.js';
+import { createEvent, getRooms, searchRooms, isRoomFree, Recurrence, RecurrencePattern, RecurrenceRange, type CalendarSensitivity } from '../lib/ews-client.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -114,6 +114,34 @@ function resolveReminder(options: { reminder?: string | false }): {
   };
 }
 
+function resolveSensitivity(options: { sensitivity?: string; private?: boolean; normal?: boolean }): CalendarSensitivity | undefined {
+  const requested = [
+    options.sensitivity !== undefined ? options.sensitivity : undefined,
+    options.private ? 'private' : undefined,
+    options.normal ? 'normal' : undefined,
+  ].filter((value): value is string => value !== undefined);
+
+  if (requested.length === 0) {
+    return undefined;
+  }
+  if (requested.length > 1) {
+    throw new Error('Use only one of --sensitivity, --private, or --normal.');
+  }
+
+  const normalized = requested[0].trim().toLowerCase();
+  const sensitivityMap: Record<string, CalendarSensitivity> = {
+    normal: 'Normal',
+    personal: 'Personal',
+    private: 'Private',
+    confidential: 'Confidential',
+  };
+  const sensitivity = sensitivityMap[normalized];
+  if (!sensitivity) {
+    throw new Error('Invalid sensitivity. Use normal, personal, private, or confidential.');
+  }
+  return sensitivity;
+}
+
 function writeError(message: string, json?: boolean): void {
   if (json) {
     console.log(JSON.stringify({ error: message }, null, 2));
@@ -132,6 +160,9 @@ export const createEventCommand = new Command('create-event')
   .option('--attendees <emails>', 'Comma-separated list of attendee emails')
   .option('--room <room>', 'Meeting room (use --list-rooms to see available)')
   .option('--teams', 'Create as Teams meeting')
+  .option('--sensitivity <sensitivity>', 'Set sensitivity: normal, personal, private, confidential')
+  .option('--private', 'Shortcut for --sensitivity private')
+  .option('--normal', 'Shortcut for --sensitivity normal')
   .option('--reminder <minutes>', 'Set a reminder this many minutes before the event')
   .option('--no-reminder', 'Create the event with reminders disabled')
   .option('--list-rooms', 'List available meeting rooms')
@@ -149,6 +180,9 @@ export const createEventCommand = new Command('create-event')
     attendees?: string;
     room?: string;
     teams?: boolean;
+    sensitivity?: string;
+    private?: boolean;
+    normal?: boolean;
     reminder?: string | false;
     listRooms?: boolean;
     findRoom?: boolean;
@@ -161,10 +195,12 @@ export const createEventCommand = new Command('create-event')
     token?: string;
   }) => {
     let requestedReminder: ReturnType<typeof resolveReminder>;
+    let requestedSensitivity: CalendarSensitivity | undefined;
     try {
       requestedReminder = resolveReminder(options);
+      requestedSensitivity = resolveSensitivity(options);
     } catch (err) {
-      writeError(err instanceof Error ? err.message : 'Invalid reminder option', options.json);
+      writeError(err instanceof Error ? err.message : 'Invalid calendar option', options.json);
       process.exit(1);
     }
 
@@ -383,6 +419,7 @@ export const createEventCommand = new Command('create-event')
       recurrence,
       reminderIsSet: requestedReminder.reminderIsSet,
       reminderMinutesBeforeStart: requestedReminder.reminderMinutesBeforeStart,
+      sensitivity: requestedSensitivity,
     });
 
     if (!result.ok || !result.data) {
@@ -406,6 +443,7 @@ export const createEventCommand = new Command('create-event')
           onlineMeetingUrl: result.data.OnlineMeetingUrl,
           reminderIsSet: result.data.reminderIsSet,
           reminderMinutesBeforeStart: result.data.reminderMinutesBeforeStart,
+          sensitivity: result.data.Sensitivity,
           recurring: !!recurrence,
           recurrence: recurrence ? {
             type: recurrence.Pattern.Type,
@@ -425,6 +463,9 @@ export const createEventCommand = new Command('create-event')
     console.log(`  When:  ${formatDate(result.data.Start.DateTime)} ${formatTime(result.data.Start.DateTime)} - ${formatTime(result.data.End.DateTime)}`);
     if (requestedReminder.hasReminderSetting) {
       console.log(`  Reminder: ${formatReminder(result.data)}`);
+    }
+    if (requestedSensitivity) {
+      console.log(`  Sensitivity: ${result.data.Sensitivity || requestedSensitivity}`);
     }
 
     if (roomName) {

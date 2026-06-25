@@ -168,6 +168,7 @@ export interface CalendarEvent {
   Body?: { ContentType: string; Content: string };
   Categories?: string[];
   ShowAs?: string;
+  Sensitivity?: CalendarSensitivity;
   Importance?: string;
   IsOnlineMeeting?: boolean;
   OnlineMeetingUrl?: string;
@@ -177,6 +178,7 @@ export interface CalendarEvent {
 }
 
 export type CalendarShowAs = 'Free' | 'Tentative' | 'Busy' | 'OOF' | 'WorkingElsewhere';
+export type CalendarSensitivity = 'Normal' | 'Personal' | 'Private' | 'Confidential';
 
 export interface RecurrencePattern {
   Type: 'Daily' | 'Weekly' | 'AbsoluteMonthly' | 'RelativeMonthly' | 'AbsoluteYearly' | 'RelativeYearly';
@@ -211,6 +213,7 @@ export interface CreateEventOptions {
   recurrence?: Recurrence;
   reminderIsSet?: boolean;
   reminderMinutesBeforeStart?: number;
+  sensitivity?: CalendarSensitivity;
 }
 
 export interface CreatedEvent {
@@ -219,6 +222,7 @@ export interface CreatedEvent {
   Start: { DateTime: string; TimeZone: string };
   End: { DateTime: string; TimeZone: string };
   ShowAs?: CalendarShowAs;
+  Sensitivity?: CalendarSensitivity;
   WebLink?: string;
   OnlineMeetingUrl?: string;
   reminderIsSet?: boolean;
@@ -238,6 +242,7 @@ export interface UpdateEventOptions {
   showAs?: CalendarShowAs;
   reminderIsSet?: boolean;
   reminderMinutesBeforeStart?: number;
+  sensitivity?: CalendarSensitivity;
 }
 
 export interface ScheduleInfo {
@@ -414,6 +419,7 @@ function parseCalendarItem(block: string, includeFullBody = false): CalendarEven
   const bodyType = extractAttribute(block, 'Body', 'BodyType') || 'Text';
   const importance = extractTag(block, 'Importance') || 'Normal';
   const showAs = extractTag(block, 'LegacyFreeBusyStatus') || 'Busy';
+  const sensitivity = extractTag(block, 'Sensitivity') as CalendarSensitivity;
   const reminderIsSetValue = extractTag(block, 'ReminderIsSet') || extractTag(block, 'IsReminderSet');
   const reminderMinutesValue = extractTag(block, 'ReminderMinutesBeforeStart');
   const reminderMinutes = reminderMinutesValue ? Number.parseInt(reminderMinutesValue, 10) : undefined;
@@ -483,6 +489,7 @@ function parseCalendarItem(block: string, includeFullBody = false): CalendarEven
     Body: includeFullBody && bodyContent ? { ContentType: bodyType, Content: bodyContent } : undefined,
     Categories: categories.length > 0 ? categories : undefined,
     ShowAs: showAs,
+    Sensitivity: sensitivity || undefined,
     Importance: importance,
     reminderIsSet: reminderIsSetValue ? reminderIsSetValue.toLowerCase() === 'true' : undefined,
     reminderMinutesBeforeStart: Number.isFinite(reminderMinutes) ? reminderMinutes : undefined,
@@ -659,6 +666,7 @@ export async function getCalendarEvents(
           <t:FieldURI FieldURI="calendar:IsCancelled" />
           <t:FieldURI FieldURI="calendar:MyResponseType" />
           <t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" />
+          <t:FieldURI FieldURI="item:Sensitivity" />
           <t:FieldURI FieldURI="item:Importance" />
           <t:FieldURI FieldURI="item:ReminderIsSet" />
           <t:FieldURI FieldURI="item:ReminderMinutesBeforeStart" />
@@ -702,6 +710,7 @@ export async function getCalendarEvent(
           <t:FieldURI FieldURI="calendar:IsCancelled" />
           <t:FieldURI FieldURI="calendar:MyResponseType" />
           <t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" />
+          <t:FieldURI FieldURI="item:Sensitivity" />
           <t:FieldURI FieldURI="item:Importance" />
           <t:FieldURI FieldURI="item:ReminderIsSet" />
           <t:FieldURI FieldURI="item:ReminderMinutesBeforeStart" />
@@ -803,7 +812,7 @@ function buildReminderCreateXml(options: {
 
 export async function createEvent(options: CreateEventOptions): Promise<OwaResponse<CreatedEvent>> {
   try {
-    const { token, subject, start, end, body, location, attendees, isOnlineMeeting, recurrence } = options;
+    const { token, subject, start, end, body, location, attendees, isOnlineMeeting, recurrence, sensitivity } = options;
     const reminder = resolveReminderCreateState(options);
 
     let attendeesXml = '';
@@ -839,6 +848,7 @@ export async function createEvent(options: CreateEventOptions): Promise<OwaRespo
           ${body ? `<t:Body BodyType="Text">${xmlEscape(body)}</t:Body>` : ''}
           <t:Start>${xmlEscape(start)}</t:Start>
           <t:End>${xmlEscape(end)}</t:End>
+          ${sensitivity ? `<t:Sensitivity>${xmlEscape(sensitivity)}</t:Sensitivity>` : ''}
           ${location ? `<t:Location>${xmlEscape(location)}</t:Location>` : ''}
           ${attendeesXml}
           ${isOnlineMeeting ? '<t:IsOnlineMeeting>true</t:IsOnlineMeeting>' : ''}
@@ -857,6 +867,7 @@ export async function createEvent(options: CreateEventOptions): Promise<OwaRespo
       Subject: subject,
       Start: { DateTime: start, TimeZone: 'UTC' },
       End: { DateTime: end, TimeZone: 'UTC' },
+      Sensitivity: sensitivity,
       WebLink: undefined,
       OnlineMeetingUrl: undefined,
       ...reminder,
@@ -868,7 +879,7 @@ export async function createEvent(options: CreateEventOptions): Promise<OwaRespo
 
 export async function updateEvent(options: UpdateEventOptions): Promise<OwaResponse<CreatedEvent>> {
   try {
-    const { token, eventId, subject, start, end, body, location, attendees, isOnlineMeeting, showAs, reminderIsSet, reminderMinutesBeforeStart } = options;
+    const { token, eventId, subject, start, end, body, location, attendees, isOnlineMeeting, showAs, reminderIsSet, reminderMinutesBeforeStart, sensitivity } = options;
 
     const updates: string[] = [];
 
@@ -889,6 +900,9 @@ export async function updateEvent(options: UpdateEventOptions): Promise<OwaRespo
     }
     if (showAs !== undefined) {
       updates.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" /><t:CalendarItem><t:LegacyFreeBusyStatus>${xmlEscape(showAs)}</t:LegacyFreeBusyStatus></t:CalendarItem></t:SetItemField>`);
+    }
+    if (sensitivity !== undefined) {
+      updates.push(`<t:SetItemField><t:FieldURI FieldURI="item:Sensitivity" /><t:CalendarItem><t:Sensitivity>${xmlEscape(sensitivity)}</t:Sensitivity></t:CalendarItem></t:SetItemField>`);
     }
     if (reminderMinutesBeforeStart !== undefined) {
       assertValidReminderMinutes(reminderMinutesBeforeStart);
@@ -950,6 +964,7 @@ export async function updateEvent(options: UpdateEventOptions): Promise<OwaRespo
       Start: { DateTime: start || '', TimeZone: 'UTC' },
       End: { DateTime: end || '', TimeZone: 'UTC' },
       ShowAs: showAs,
+      Sensitivity: sensitivity,
       reminderIsSet: reminderMinutesBeforeStart !== undefined ? true : reminderIsSet,
       reminderMinutesBeforeStart,
     });

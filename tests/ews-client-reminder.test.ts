@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { createEvent, updateEvent } from '../src/lib/ews-client.js';
+import { createEvent, getCalendarEvent, updateEvent } from '../src/lib/ews-client.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -25,6 +25,7 @@ function stubEws(envelopes: string[]) {
                     <t:Subject>Test event</t:Subject>
                     <t:Start>2026-06-08T15:30:00Z</t:Start>
                     <t:End>2026-06-08T16:15:00Z</t:End>
+                    <t:Sensitivity>Private</t:Sensitivity>
                   </t:CalendarItem>
                 </m:Items>
               </m:ResponseMessage>
@@ -56,6 +57,23 @@ test('createEvent writes reminder settings into the calendar item', async () => 
   expect(envelopes[0]).toContain('<t:ReminderMinutesBeforeStart>30</t:ReminderMinutesBeforeStart>');
 });
 
+test('createEvent writes calendar sensitivity into the calendar item', async () => {
+  const envelopes: string[] = [];
+  stubEws(envelopes);
+
+  const result = await createEvent({
+    token: 'token',
+    subject: 'Test event',
+    start: '2026-06-08T15:30:00Z',
+    end: '2026-06-08T16:15:00Z',
+    sensitivity: 'Private',
+  });
+
+  expect(result.ok).toBe(true);
+  expect(result.data?.Sensitivity).toBe('Private');
+  expect(envelopes[0]).toContain('<t:Sensitivity>Private</t:Sensitivity>');
+});
+
 test('updateEvent writes reminder FieldURI updates', async () => {
   const envelopes: string[] = [];
   stubEws(envelopes);
@@ -75,6 +93,34 @@ test('updateEvent writes reminder FieldURI updates', async () => {
   expect(envelopes[0]).toContain('FieldURI="item:ReminderMinutesBeforeStart"');
   expect(envelopes[0]).toContain('<t:ReminderMinutesBeforeStart>30</t:ReminderMinutesBeforeStart>');
   expect(envelopes[0]).toContain('SendMeetingInvitationsOrCancellations="SendToNone"');
+});
+
+test('updateEvent writes sensitivity FieldURI updates without meeting notifications', async () => {
+  const envelopes: string[] = [];
+  stubEws(envelopes);
+
+  const result = await updateEvent({
+    token: 'token',
+    eventId: 'event-id',
+    sensitivity: 'Private',
+  });
+
+  expect(result.ok).toBe(true);
+  expect(result.data?.Sensitivity).toBe('Private');
+  expect(envelopes[0]).toContain('FieldURI="item:Sensitivity"');
+  expect(envelopes[0]).toContain('<t:Sensitivity>Private</t:Sensitivity>');
+  expect(envelopes[0]).toContain('SendMeetingInvitationsOrCancellations="SendToNone"');
+});
+
+test('getCalendarEvent parses calendar sensitivity', async () => {
+  const envelopes: string[] = [];
+  stubEws(envelopes);
+
+  const result = await getCalendarEvent('token', 'event-id');
+
+  expect(result.ok).toBe(true);
+  expect(result.data?.Sensitivity).toBe('Private');
+  expect(envelopes[0]).toContain('FieldURI="item:Sensitivity"');
 });
 
 test('updateEvent can disable reminders without requiring reminder minutes', async () => {
