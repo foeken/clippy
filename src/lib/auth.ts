@@ -1,6 +1,7 @@
 import { homedir } from 'os';
 import { join } from 'path';
 import { readFile, writeFile, mkdir } from 'fs/promises';
+import { getCloudConfig, getEwsTokenScopes, getOAuthTokenEndpoint, type CloudEnvironment } from './cloud.js';
 
 export interface AuthResult {
   success: boolean;
@@ -12,6 +13,7 @@ interface CachedToken {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+  cloud?: CloudEnvironment;
 }
 
 const TOKEN_CACHE_FILE = join(homedir(), '.config', 'clippy', 'token-cache.json');
@@ -47,15 +49,14 @@ async function saveCachedToken(token: CachedToken): Promise<void> {
 }
 
 async function refreshAccessToken(clientId: string, refreshToken: string): Promise<CachedToken> {
-  const scopes = [
-    'https://outlook.office365.com/EWS.AccessAsUser.All offline_access',
-    'https://outlook.office365.com/.default offline_access',
-  ];
+  const cloudConfig = getCloudConfig();
+  const scopes = getEwsTokenScopes(cloudConfig);
+  const tokenEndpoint = getOAuthTokenEndpoint(cloudConfig);
 
   let lastError = '';
 
   for (const scope of scopes) {
-    const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+    const response = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -79,6 +80,7 @@ async function refreshAccessToken(clientId: string, refreshToken: string): Promi
         accessToken: json.access_token,
         refreshToken: json.refresh_token || refreshToken,
         expiresAt: getJwtExpiration(json.access_token) || (Date.now() + (json.expires_in || 3600) * 1000),
+        cloud: cloudConfig.environment,
       };
     }
 
@@ -96,6 +98,7 @@ export async function resolveAuth(options?: { token?: string }): Promise<AuthRes
   try {
     const clientId = process.env.EWS_CLIENT_ID;
     const envRefreshToken = process.env.EWS_REFRESH_TOKEN;
+    const cloudConfig = getCloudConfig();
 
     if (!clientId || !envRefreshToken) {
       return {
@@ -106,7 +109,8 @@ export async function resolveAuth(options?: { token?: string }): Promise<AuthRes
 
     // Check cached token
     const cached = await loadCachedToken();
-    if (cached && cached.expiresAt > Date.now() + 60_000) {
+    const cachedCloud = cached?.cloud || 'commercial';
+    if (cached && cachedCloud === cloudConfig.environment && cached.expiresAt > Date.now() + 60_000) {
       return { success: true, token: cached.accessToken };
     }
 

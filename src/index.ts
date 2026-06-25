@@ -1,6 +1,10 @@
 // Library exports for programmatic usage
 export { resolveAuth } from './lib/auth.js';
 export type { AuthResult } from './lib/auth.js';
+export {
+  getCloudConfig, getEwsTokenScopes, getOAuthTokenEndpoint, resolveCloudEnvironment,
+} from './lib/cloud.js';
+export type { CloudConfig, CloudEnvironment } from './lib/cloud.js';
 
 export {
   validateSession, getOwaUserInfo,

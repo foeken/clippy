@@ -17,6 +17,9 @@ import { draftsCommand } from './commands/drafts.js';
 if (process.argv.includes('--read-only')) {
   process.env.CLIPPY_READONLY = 'true';
 }
+if (process.argv.includes('--gcc')) {
+  process.env.CLIPPY_CLOUD = 'gcc';
+}
 
 const program = new Command();
 
@@ -24,6 +27,7 @@ program
   .name('clippy')
   .description('CLI for Microsoft 365/EWS')
   .version('0.1.0')
+  .option('--gcc', 'Use Microsoft 365 US Government endpoints')
   .option('--read-only', 'Disable write commands');
 
 program.addCommand(whoamiCommand);

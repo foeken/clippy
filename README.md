@@ -31,8 +31,20 @@ Create a `.env` file in the project root (or set environment variables):
 ```bash
 EWS_CLIENT_ID=your-azure-app-client-id
 EWS_REFRESH_TOKEN=your-refresh-token
+CLIPPY_CLOUD=commercial
 CLIPPY_READONLY=false
 ```
+
+### Cloud Environments
+
+`CLIPPY_CLOUD` defaults to `commercial`, which uses the standard Microsoft 365 endpoints. Set `CLIPPY_CLOUD=gcc` or pass `--gcc` to use the Office 365 US Government `.us` endpoints:
+
+```bash
+CLIPPY_CLOUD=gcc clippy calendar
+clippy --gcc calendar
+```
+
+Standard GCC tenants that use worldwide Microsoft 365 endpoints should leave `CLIPPY_CLOUD=commercial`; use `gcc` for US Government/GCC High-style `.us` endpoints.
 
 ### How It Works
 
@@ -414,6 +426,7 @@ clippy find "smith" --people
 All commands support:
 
 ```bash
+--gcc               # Use Microsoft 365 US Government endpoints
 --read-only         # Disable write actions (send/respond/create/delete)
 --json              # Output as JSON (for scripting)
 --token <token>     # Use a specific access token
