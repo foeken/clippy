@@ -5,6 +5,7 @@ import { markdownToHtml } from '../lib/markdown.js';
 import { readFile, stat } from 'fs/promises';
 import { basename } from 'path';
 import { lookup } from 'mime-types';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 export const sendCommand = new Command('send')
   .description('Send an email')
@@ -30,6 +31,8 @@ export const sendCommand = new Command('send')
     json?: boolean;
     token?: string;
   }) => {
+    assertReadWriteAllowed('Sending email');
+
     const authResult = await resolveAuth({
       token: options.token,
     });

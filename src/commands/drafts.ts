@@ -5,6 +5,7 @@ import { markdownToHtml } from '../lib/markdown.js';
 import { readFile, stat } from 'fs/promises';
 import { basename } from 'path';
 import { lookup } from 'mime-types';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -59,6 +60,11 @@ export const draftsCommand = new Command('drafts')
     json?: boolean;
     token?: string;
   }) => {
+    const hasWriteAction = !!(options.create || options.edit || options.send || options.delete);
+    if (hasWriteAction) {
+      assertReadWriteAllowed('Changing drafts');
+    }
+
     const authResult = await resolveAuth({
       token: options.token,
     });

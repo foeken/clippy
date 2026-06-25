@@ -14,12 +14,17 @@ import { foldersCommand } from './commands/folders.js';
 import { sendCommand } from './commands/send.js';
 import { draftsCommand } from './commands/drafts.js';
 
+if (process.argv.includes('--read-only')) {
+  process.env.CLIPPY_READONLY = 'true';
+}
+
 const program = new Command();
 
 program
   .name('clippy')
   .description('CLI for Microsoft 365/EWS')
-  .version('0.1.0');
+  .version('0.1.0')
+  .option('--read-only', 'Disable write commands');
 
 program.addCommand(whoamiCommand);
 program.addCommand(calendarCommand);

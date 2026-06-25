@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
 import { getCalendarEvent, getCalendarEvents, respondToEvent, getOwaUserInfo, ResponseType } from '../lib/ews-client.js';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -51,6 +52,21 @@ export const respondCommand = new Command('respond')
     json?: boolean;
     token?: string;
   }) => {
+    // Default action is 'list'
+    const actionLower = (action || 'list').toLowerCase();
+
+    if (!['list', 'accept', 'decline', 'tentative'].includes(actionLower)) {
+      writeError(`Unknown action: ${action}`, options.json);
+      if (!options.json) {
+        console.error('Valid actions: list, accept, decline, tentative');
+      }
+      process.exit(1);
+    }
+
+    if (actionLower !== 'list') {
+      assertReadWriteAllowed('Responding to invitations');
+    }
+
     const authResult = await resolveAuth({
       token: options.token,
     });
@@ -61,17 +77,6 @@ export const respondCommand = new Command('respond')
       } else {
         console.error(`Error: ${authResult.error}`);
         console.error('\nCheck your .env file for EWS_CLIENT_ID and EWS_REFRESH_TOKEN.');
-      }
-      process.exit(1);
-    }
-
-    // Default action is 'list'
-    const actionLower = (action || 'list').toLowerCase();
-
-    if (!['list', 'accept', 'decline', 'tentative'].includes(actionLower)) {
-      writeError(`Unknown action: ${action}`, options.json);
-      if (!options.json) {
-        console.error('Valid actions: list, accept, decline, tentative');
       }
       process.exit(1);
     }

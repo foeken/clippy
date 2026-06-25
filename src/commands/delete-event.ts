@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
 import { getCalendarEvent, getCalendarEvents, deleteEvent, cancelEvent, type CalendarEvent } from '../lib/ews-client.js';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -57,6 +58,10 @@ export const deleteEventCommand = new Command('delete-event')
     json?: boolean;
     token?: string;
   }) => {
+    if (options.id) {
+      assertReadWriteAllowed('Deleting events');
+    }
+
     const authResult = await resolveAuth({
       token: options.token,
     });

@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
 import { createEvent, getRooms, searchRooms, isRoomFree, Recurrence, RecurrencePattern, RecurrenceRange, type CalendarSensitivity } from '../lib/ews-client.js';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -194,6 +195,10 @@ export const createEventCommand = new Command('create-event')
     json?: boolean;
     token?: string;
   }) => {
+    if (!options.listRooms) {
+      assertReadWriteAllowed('Creating events');
+    }
+
     let requestedReminder: ReturnType<typeof resolveReminder>;
     let requestedSensitivity: CalendarSensitivity | undefined;
     try {

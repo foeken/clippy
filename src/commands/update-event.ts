@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
 import { getCalendarEvents, updateEvent, searchRooms, getRooms, getCalendarEvent, type CalendarShowAs, type CalendarSensitivity } from '../lib/ews-client.js';
+import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -244,6 +245,17 @@ export const updateEventCommand = new Command('update-event')
       process.exit(1);
     }
 
+    const hasOrganizerUpdates = options.title || options.description || options.start ||
+      options.end || options.addAttendee.length > 0 || options.room ||
+      options.location || requestedShowAs !== undefined || options.teams !== undefined;
+    const hasLocalTitleUpdate = options.localTitle !== undefined;
+    const hasSensitivityUpdate = requestedSensitivity !== undefined;
+    const hasUpdates = hasOrganizerUpdates || requestedReminder.hasReminderUpdate || hasLocalTitleUpdate || hasSensitivityUpdate;
+
+    if (hasUpdates) {
+      assertReadWriteAllowed('Updating events');
+    }
+
     const authResult = await resolveAuth({
       token: options.token,
     });
@@ -383,14 +395,6 @@ export const updateEventCommand = new Command('update-event')
       writeError('No event selected.', options.json);
       process.exit(1);
     }
-
-    // Check if any update options were provided
-    const hasOrganizerUpdates = options.title || options.description || options.start ||
-      options.end || options.addAttendee.length > 0 || options.room ||
-      options.location || requestedShowAs !== undefined || options.teams !== undefined;
-    const hasLocalTitleUpdate = options.localTitle !== undefined;
-    const hasSensitivityUpdate = requestedSensitivity !== undefined;
-    const hasUpdates = hasOrganizerUpdates || requestedReminder.hasReminderUpdate || hasLocalTitleUpdate || hasSensitivityUpdate;
 
     if (!hasUpdates) {
       // Show current event details

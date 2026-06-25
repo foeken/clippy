@@ -31,6 +31,7 @@ Create a `.env` file in the project root (or set environment variables):
 ```bash
 EWS_CLIENT_ID=your-azure-app-client-id
 EWS_REFRESH_TOKEN=your-refresh-token
+CLIPPY_READONLY=false
 ```
 
 ### How It Works
@@ -413,9 +414,12 @@ clippy find "smith" --people
 All commands support:
 
 ```bash
+--read-only         # Disable write actions (send/respond/create/delete)
 --json              # Output as JSON (for scripting)
 --token <token>     # Use a specific access token
 ```
+
+You can also set `CLIPPY_READONLY=true` to allow reads while blocking mailbox and calendar writes.
 
 ---
 
