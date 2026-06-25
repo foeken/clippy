@@ -1,3 +1,5 @@
+import { getCloudConfig } from './cloud.js';
+
 // ─── XML Utilities ───
 
 function xmlEscape(value: string): string {
@@ -75,7 +77,6 @@ function extractSelfClosingOrBlock(xml: string, tagName: string): string {
 
 // ─── SOAP Core ───
 
-const EWS_ENDPOINT = process.env.EWS_ENDPOINT || 'https://outlook.office365.com/EWS/Exchange.asmx';
 const EWS_USERNAME = process.env.EWS_USERNAME || '';
 
 function soapEnvelope(body: string): string {
@@ -94,7 +95,7 @@ function soapEnvelope(body: string): string {
 }
 
 async function callEws(token: string, envelope: string): Promise<string> {
-  const response = await fetch(EWS_ENDPOINT, {
+  const response = await fetch(getCloudConfig().ewsEndpoint, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
