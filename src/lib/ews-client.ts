@@ -1095,8 +1095,8 @@ export async function getEmails(options: GetEmailsOptions): Promise<OwaResponse<
       if (filter.includes("FlagStatus") && filter.includes("Flagged")) {
         restrictions.push(`
         <t:IsEqualTo>
-          <t:FieldURI FieldURI="item:Flag/FlagStatus" />
-          <t:FieldURIOrConstant><t:Constant Value="Flagged" /></t:FieldURIOrConstant>
+          <t:ExtendedFieldURI PropertyTag="0x1090" PropertyType="Integer" />
+          <t:FieldURIOrConstant><t:Constant Value="2" /></t:FieldURIOrConstant>
         </t:IsEqualTo>`);
       }
 
