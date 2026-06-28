@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { getCalendarEvent, getCalendarEvents, respondToEvent, getOwaUserInfo, ResponseType } from '../lib/ews-client.js';
+import { getCalendarEvent, getCalendarEvents, respondToEvent, getOwaUserInfo, ResponseType, type CalendarAttendee, type CalendarEvent } from '../lib/ews-client.js';
 import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatTime(dateStr: string): string {
@@ -30,6 +30,62 @@ function writeError(message: string, json?: boolean): void {
   } else {
     console.error(`Error: ${message}`);
   }
+}
+
+function getMyAttendance(event: CalendarEvent, userEmail?: string): CalendarAttendee | undefined {
+  if (!userEmail) return undefined;
+  return event.Attendees?.find(
+    a => a.EmailAddress?.Address?.toLowerCase() === userEmail
+  );
+}
+
+export function normalizeMyResponseType(responseType?: string): CalendarAttendee['Status']['Response'] | undefined {
+  switch (responseType) {
+    case 'Accept':
+    case 'Accepted':
+      return 'Accepted';
+    case 'Decline':
+    case 'Declined':
+      return 'Declined';
+    case 'Tentative':
+    case 'TentativelyAccepted':
+      return 'TentativelyAccepted';
+    case 'NoResponseReceived':
+    case 'NotResponded':
+      return 'NotResponded';
+    case 'Organizer':
+      return 'Organizer';
+    case 'Unknown':
+    case 'None':
+      return 'None';
+    default:
+      return undefined;
+  }
+}
+
+export function getInvitationResponseStatus(event: CalendarEvent, userEmail?: string): CalendarAttendee['Status']['Response'] | undefined {
+  return normalizeMyResponseType(event.MyResponseType) || getMyAttendance(event, userEmail)?.Status?.Response;
+}
+
+export function isCancellationNoticeSubject(subject?: string): boolean {
+  const normalized = subject?.trim().toLowerCase() || '';
+  return /^(canceled|cancelled|geannuleerd)\s*:/.test(normalized);
+}
+
+export function isPendingInvitation(event: CalendarEvent, userEmail?: string, onlyRequired = false): boolean {
+  if (event.IsCancelled) return false;
+  if (isCancellationNoticeSubject(event.Subject)) return false;
+  if (event.IsOrganizer) return false;
+
+  const response = getInvitationResponseStatus(event, userEmail);
+  const isPending = response === 'None' || response === 'NotResponded';
+  if (!isPending) return false;
+
+  const myAttendance = getMyAttendance(event, userEmail);
+  const isOptional = myAttendance?.Type === 'Optional';
+  if (onlyRequired && isOptional) return false;
+
+  return true;
 }
 
 export const respondCommand = new Command('respond')
@@ -104,27 +160,7 @@ export const respondCommand = new Command('respond')
 
       // Filter to events where user is an attendee (and not organizer)
       const pendingEvents = result.data.filter(event => {
-        if (event.IsCancelled) return false;
-        if (event.IsOrganizer) return false;
-
-        // Find user's attendance record
-        const myAttendance = event.Attendees?.find(
-          a => a.EmailAddress?.Address?.toLowerCase() === userEmail
-        );
-
-        // Some events don't include attendee records; fall back to event-level ResponseStatus if present
-        const eventResponse = (event as any).ResponseStatus?.Response as string | undefined;
-        const response = myAttendance?.Status?.Response || eventResponse || 'None';
-
-        // Include events where response is None or NotResponded
-        const isPending = response === 'None' || response === 'NotResponded';
-        if (!isPending) return false;
-
-        // Optional attendance handling (only if we can detect it)
-        const isOptional = myAttendance?.Type === 'Optional';
-        if (options.onlyRequired && isOptional) return false;
-
-        return true;
+        return isPendingInvitation(event, userEmail, Boolean(options.onlyRequired));
       });
 
       if (options.json) {
@@ -156,11 +192,7 @@ export const respondCommand = new Command('respond')
         const startTime = formatTime(event.Start.DateTime);
         const endTime = formatTime(event.End.DateTime);
 
-        const myAttendance = event.Attendees?.find(
-          a => a.EmailAddress?.Address?.toLowerCase() === userEmail
-        );
-        const eventResponse = (event as any).ResponseStatus?.Response as string | undefined;
-        const response = myAttendance?.Status?.Response || eventResponse || 'None';
+        const response = getInvitationResponseStatus(event, userEmail) || 'None';
         const icon = getResponseIcon(response);
 
         console.log(`\n  [${i + 1}] ${icon} ${event.Subject}`);

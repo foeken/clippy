@@ -25,6 +25,7 @@ function stubEws(envelopes: string[]) {
                     <t:Subject>Test event</t:Subject>
                     <t:Start>2026-06-08T15:30:00Z</t:Start>
                     <t:End>2026-06-08T16:15:00Z</t:End>
+                    <t:MyResponseType>Accept</t:MyResponseType>
                     <t:Sensitivity>Private</t:Sensitivity>
                   </t:CalendarItem>
                 </m:Items>
@@ -120,7 +121,9 @@ test('getCalendarEvent parses calendar sensitivity', async () => {
 
   expect(result.ok).toBe(true);
   expect(result.data?.Sensitivity).toBe('Private');
+  expect(result.data?.MyResponseType).toBe('Accept');
   expect(envelopes[0]).toContain('FieldURI="item:Sensitivity"');
+  expect(envelopes[0]).toContain('FieldURI="calendar:MyResponseType"');
 });
 
 test('updateEvent can disable reminders without requiring reminder minutes', async () => {

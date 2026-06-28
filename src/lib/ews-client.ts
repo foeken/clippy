@@ -165,6 +165,7 @@ export interface CalendarEvent {
   IsAllDay?: boolean;
   IsCancelled?: boolean;
   IsOrganizer?: boolean;
+  MyResponseType?: string;
   BodyPreview?: string;
   Body?: { ContentType: string; Content: string };
   Categories?: string[];
@@ -486,6 +487,7 @@ function parseCalendarItem(block: string, includeFullBody = false): CalendarEven
     IsAllDay: isAllDay,
     IsCancelled: isCancelled,
     IsOrganizer: isOrganizer,
+    MyResponseType: myResponseType || undefined,
     BodyPreview: bodyContent ? bodyContent.substring(0, 200).replace(/\s+/g, ' ').trim() : undefined,
     Body: includeFullBody && bodyContent ? { ContentType: bodyType, Content: bodyContent } : undefined,
     Categories: categories.length > 0 ? categories : undefined,
