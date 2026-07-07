@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { getInvitationResponseStatus, isCancellationNoticeSubject, isPendingInvitation } from '../src/commands/respond.js';
+import { getInvitationResponseStatus, isCancellationNoticeSubject, isPendingInvitation, resolveProposedResponseWindow } from '../src/commands/respond.js';
 import type { CalendarEvent } from '../src/lib/ews-client.js';
 
 function calendarEvent(overrides: Partial<CalendarEvent>): CalendarEvent {
@@ -51,4 +51,55 @@ test('pending invitation filter excludes cancellation notices that Exchange does
 
   expect(isCancellationNoticeSubject(cancellationNotice.Subject)).toBe(true);
   expect(isPendingInvitation(cancellationNotice, 'andre.foeken@nedap.com')).toBe(false);
+});
+
+test('proposal window can move to a different date while preserving duration', () => {
+  const window = resolveProposedResponseWindow(calendarEvent({}), {
+    date: '2026-07-09',
+    start: '09:45',
+  });
+
+  expect(window.start.getFullYear()).toBe(2026);
+  expect(window.start.getMonth()).toBe(6);
+  expect(window.start.getDate()).toBe(9);
+  expect(window.start.getHours()).toBe(9);
+  expect(window.start.getMinutes()).toBe(45);
+  expect(window.end.getTime() - window.start.getTime()).toBe(45 * 60 * 1000);
+});
+
+test('proposal window can change duration with explicit end time', () => {
+  const window = resolveProposedResponseWindow(calendarEvent({}), {
+    date: '2026-07-09',
+    start: '09:45',
+    end: '10:15',
+  });
+
+  expect(window.start.getFullYear()).toBe(2026);
+  expect(window.start.getMonth()).toBe(6);
+  expect(window.start.getDate()).toBe(9);
+  expect(window.start.getHours()).toBe(9);
+  expect(window.start.getMinutes()).toBe(45);
+  expect(window.end.getHours()).toBe(10);
+  expect(window.end.getMinutes()).toBe(15);
+  expect(window.end.getTime() - window.start.getTime()).toBe(30 * 60 * 1000);
+});
+
+test('proposal window can change duration with duration minutes', () => {
+  const window = resolveProposedResponseWindow(calendarEvent({}), {
+    date: '2026-07-09',
+    start: '09:45',
+    duration: '60',
+  });
+
+  expect(window.start.getHours()).toBe(9);
+  expect(window.start.getMinutes()).toBe(45);
+  expect(window.end.getTime() - window.start.getTime()).toBe(60 * 60 * 1000);
+});
+
+test('proposal window rejects conflicting end and duration options', () => {
+  expect(() => resolveProposedResponseWindow(calendarEvent({}), {
+    start: '09:45',
+    end: '10:15',
+    duration: '60',
+  })).toThrow('Use only one of --end or --duration');
 });

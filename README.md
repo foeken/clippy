@@ -226,6 +226,13 @@ clippy respond accept --id <eventId>
 clippy respond decline --id <eventId> --comment "Conflict with another meeting"
 clippy respond tentative --id <eventId>
 
+# Propose a new time when you are not the organizer
+clippy respond propose --id <eventId> --date 2026-07-08 --start 09:45 --end 10:15
+clippy respond propose --id <eventId> --date 2026-07-08 --start 09:45 --duration 30
+
+# Date-only proposals keep the original time and duration on a different day
+clippy respond propose --id <eventId> --date 2026-07-09
+
 # Don't send response to organizer
 clippy respond accept --id <eventId> --no-notify
 

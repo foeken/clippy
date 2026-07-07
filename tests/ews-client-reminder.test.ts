@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { createEvent, getCalendarEvent, getRecurringMasterEvent, updateEvent } from '../src/lib/ews-client.js';
+import { createEvent, getCalendarEvent, getRecurringMasterEvent, respondToEvent, updateEvent } from '../src/lib/ews-client.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -204,4 +204,26 @@ test('updateEvent can disable reminders without requiring reminder minutes', asy
   expect(envelopes[0]).toContain('FieldURI="item:ReminderIsSet"');
   expect(envelopes[0]).toContain('<t:ReminderIsSet>false</t:ReminderIsSet>');
   expect(envelopes[0]).not.toContain('FieldURI="item:ReminderMinutesBeforeStart"');
+});
+
+test('respondToEvent can propose a new date, start, and duration', async () => {
+  const envelopes: string[] = [];
+  stubEws(envelopes);
+
+  const result = await respondToEvent({
+    token: 'token',
+    eventId: 'event-id',
+    response: 'propose',
+    proposedStart: '2026-07-09T07:45:00.000Z',
+    proposedEnd: '2026-07-09T08:30:00.000Z',
+    comment: 'Could we use this time instead?',
+  });
+
+  expect(result.ok).toBe(true);
+  expect(envelopes[0]).toContain('<t:TentativelyAcceptItem>');
+  expect(envelopes[0]).toContain('<t:ReferenceItemId Id="event-id" />');
+  expect(envelopes[0]).toContain('<t:ProposedStart>2026-07-09T07:45:00.000Z</t:ProposedStart>');
+  expect(envelopes[0]).toContain('<t:ProposedEnd>2026-07-09T08:30:00.000Z</t:ProposedEnd>');
+  expect(envelopes[0]).toContain('<t:Body BodyType="Text">Could we use this time instead?</t:Body>');
+  expect(envelopes[0]).toContain('MessageDisposition="SendAndSaveCopy"');
 });

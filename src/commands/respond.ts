@@ -13,6 +13,152 @@ function formatDate(dateStr: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+function parseTimeToDate(timeStr: string, baseDate: Date): Date {
+  const result = new Date(baseDate);
+
+  const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+  if (timeMatch) {
+    result.setHours(Number.parseInt(timeMatch[1], 10), Number.parseInt(timeMatch[2], 10), 0, 0);
+    return result;
+  }
+
+  const hourMatch = timeStr.match(/^(\d{1,2})(am|pm)?$/i);
+  if (hourMatch) {
+    let hour = Number.parseInt(hourMatch[1], 10);
+    const isPM = hourMatch[2]?.toLowerCase() === 'pm';
+    if (isPM && hour < 12) hour += 12;
+    if (!isPM && hour === 12) hour = 0;
+    result.setHours(hour, 0, 0, 0);
+    return result;
+  }
+
+  const parsed = new Date(timeStr);
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+
+  throw new Error('Invalid time value. Use HH:MM, HHam/pm, YYYY-MM-DDTHH:MM, or an ISO timestamp.');
+}
+
+function parseDateTimeToDate(value: string, baseDate: Date): Date {
+  const trimmed = value.trim();
+  const localDateTime = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s])(\d{1,2}):(\d{2})$/);
+  if (localDateTime) {
+    const [, year, month, day, hour, minute] = localDateTime;
+    return new Date(
+      Number.parseInt(year, 10),
+      Number.parseInt(month, 10) - 1,
+      Number.parseInt(day, 10),
+      Number.parseInt(hour, 10),
+      Number.parseInt(minute, 10),
+      0,
+      0
+    );
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  return parseTimeToDate(trimmed, baseDate);
+}
+
+function parseProposalDate(value: string): Date {
+  const normalized = value.trim().toLowerCase();
+  const result = new Date();
+
+  if (normalized === 'today') {
+    result.setHours(0, 0, 0, 0);
+    return result;
+  }
+  if (normalized === 'tomorrow') {
+    result.setDate(result.getDate() + 1);
+    result.setHours(0, 0, 0, 0);
+    return result;
+  }
+  if (normalized === 'yesterday') {
+    result.setDate(result.getDate() - 1);
+    result.setHours(0, 0, 0, 0);
+    return result;
+  }
+
+  const dateOnly = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!dateOnly) {
+    throw new Error('Invalid --date value. Use YYYY-MM-DD, today, tomorrow, or yesterday.');
+  }
+
+  const [, year, month, day] = dateOnly;
+  return new Date(
+    Number.parseInt(year, 10),
+    Number.parseInt(month, 10) - 1,
+    Number.parseInt(day, 10),
+    0,
+    0,
+    0,
+    0
+  );
+}
+
+function moveDateKeepingTime(date: Date, targetDate: Date): Date {
+  return new Date(
+    targetDate.getFullYear(),
+    targetDate.getMonth(),
+    targetDate.getDate(),
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds(),
+    date.getMilliseconds()
+  );
+}
+
+export function resolveProposedResponseWindow(
+  event: CalendarEvent,
+  options: { date?: string; start?: string; end?: string; duration?: string }
+): { start: Date; end: Date } {
+  const currentStart = new Date(event.Start.DateTime);
+  const currentEnd = new Date(event.End.DateTime);
+  if (Number.isNaN(currentStart.getTime()) || Number.isNaN(currentEnd.getTime())) {
+    throw new Error('Event has invalid start or end time.');
+  }
+
+  const durationMs = currentEnd.getTime() - currentStart.getTime();
+  if (durationMs <= 0) {
+    throw new Error('Event has invalid duration.');
+  }
+
+  const proposalDate = options.date ? parseProposalDate(options.date) : undefined;
+  const baseDate = proposalDate || currentStart;
+  let start = proposalDate ? moveDateKeepingTime(currentStart, proposalDate) : new Date(currentStart);
+  let end = proposalDate ? new Date(start.getTime() + durationMs) : new Date(currentEnd);
+
+  if (options.start) {
+    start = parseDateTimeToDate(options.start, baseDate);
+    if (!options.end) {
+      end = new Date(start.getTime() + durationMs);
+    }
+  }
+
+  if (options.end) {
+    end = parseDateTimeToDate(options.end, start);
+  }
+
+  if (options.duration !== undefined) {
+    if (options.end) {
+      throw new Error('Use only one of --end or --duration for a proposal.');
+    }
+    const durationMinutes = Number.parseInt(options.duration, 10);
+    if (!/^\d+$/.test(options.duration.trim()) || durationMinutes <= 0) {
+      throw new Error('Invalid --duration value. Use a positive number of minutes.');
+    }
+    end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+  }
+
+  if (end <= start) {
+    throw new Error('Proposed event end must be after the proposed start.');
+  }
+
+  return { start, end };
+}
+
 function getResponseIcon(response: string): string {
   switch (response) {
     case 'Accepted': return '\u2713';
@@ -89,11 +235,15 @@ export function isPendingInvitation(event: CalendarEvent, userEmail?: string, on
 }
 
 export const respondCommand = new Command('respond')
-  .description('Respond to calendar invitations (accept/decline/tentative)')
-  .argument('[action]', 'Action: list, accept, decline, tentative')
+  .description('Respond to calendar invitations (accept/decline/tentative/propose)')
+  .argument('[action]', 'Action: list, accept, decline, tentative, propose')
   .argument('[eventIndex]', 'Event index from the list (deprecated; use --id)')
   .option('--id <eventId>', 'Respond to a specific event by stable ID')
   .option('--comment <text>', 'Add a comment to your response')
+  .option('--date <date>', 'For propose: proposed date (YYYY-MM-DD, today, tomorrow, yesterday)')
+  .option('--start <time>', 'For propose: proposed start time (HH:MM, YYYY-MM-DDTHH:MM, or ISO timestamp)')
+  .option('--end <time>', 'For propose: proposed end time (HH:MM, YYYY-MM-DDTHH:MM, or ISO timestamp)')
+  .option('--duration <minutes>', 'For propose: proposed duration in minutes')
   .option('--no-notify', 'Don\'t send response to organizer')
   .option('--include-optional', 'Include optional invitations (default)', true)
   .option('--only-required', 'Only show required invitations')
@@ -102,6 +252,10 @@ export const respondCommand = new Command('respond')
   .action(async (action: string | undefined, eventIndex: string | undefined, options: {
     id?: string;
     comment?: string;
+    date?: string;
+    start?: string;
+    end?: string;
+    duration?: string;
     notify: boolean;
     includeOptional?: boolean;
     onlyRequired?: boolean;
@@ -111,10 +265,10 @@ export const respondCommand = new Command('respond')
     // Default action is 'list'
     const actionLower = (action || 'list').toLowerCase();
 
-    if (!['list', 'accept', 'decline', 'tentative'].includes(actionLower)) {
+    if (!['list', 'accept', 'decline', 'tentative', 'propose'].includes(actionLower)) {
       writeError(`Unknown action: ${action}`, options.json);
       if (!options.json) {
-        console.error('Valid actions: list, accept, decline, tentative');
+        console.error('Valid actions: list, accept, decline, tentative, propose');
       }
       process.exit(1);
     }
@@ -212,6 +366,7 @@ export const respondCommand = new Command('respond')
       console.log('  clippy respond accept --id <eventId>');
       console.log('  clippy respond decline --id <eventId>');
       console.log('  clippy respond tentative --id <eventId>');
+      console.log('  clippy respond propose --id <eventId> --date 2026-07-08 --start 09:45 --end 10:15');
       console.log('');
       return;
     }
@@ -240,10 +395,31 @@ export const respondCommand = new Command('respond')
       process.exit(1);
     }
 
+    let proposedWindow: { start: Date; end: Date } | undefined;
+    if (actionLower === 'propose') {
+      if (!options.start && !options.date) {
+        writeError('Please specify a proposed time with --start, and optionally --date and --end.', options.json);
+        process.exit(1);
+      }
+      if (!options.notify) {
+        writeError('Proposing a new time requires notifying the organizer; omit --no-notify.', options.json);
+        process.exit(1);
+      }
+      try {
+        proposedWindow = resolveProposedResponseWindow(targetEvent, options);
+      } catch (err) {
+        writeError(err instanceof Error ? err.message : 'Invalid proposed time.', options.json);
+        process.exit(1);
+      }
+    }
+
     if (!options.json) {
       console.log(`\nResponding to: ${targetEvent.Subject}`);
       console.log(`  ${formatDate(targetEvent.Start.DateTime)} ${formatTime(targetEvent.Start.DateTime)} - ${formatTime(targetEvent.End.DateTime)}`);
       console.log(`  Action: ${actionLower}`);
+      if (proposedWindow) {
+        console.log(`  Proposed: ${formatDate(proposedWindow.start.toISOString())} ${formatTime(proposedWindow.start.toISOString())} - ${formatTime(proposedWindow.end.toISOString())}`);
+      }
       if (options.comment) {
         console.log(`  Comment: ${options.comment}`);
       }
@@ -256,6 +432,8 @@ export const respondCommand = new Command('respond')
       response: actionLower as ResponseType,
       comment: options.comment,
       sendResponse: options.notify,
+      proposedStart: proposedWindow?.start.toISOString(),
+      proposedEnd: proposedWindow?.end.toISOString(),
     });
 
     if (!response.ok) {
@@ -263,11 +441,17 @@ export const respondCommand = new Command('respond')
       process.exit(1);
     }
 
-    const actionPast = actionLower === 'tentative' ? 'tentatively accepted' : `${actionLower}d`;
+    const actionPast = actionLower === 'tentative'
+      ? 'tentatively accepted'
+      : actionLower === 'propose'
+        ? 'proposed a new time for'
+        : `${actionLower}d`;
     if (options.json) {
       console.log(JSON.stringify({
         success: true,
         action: actionLower,
+        proposedStart: proposedWindow?.start.toISOString(),
+        proposedEnd: proposedWindow?.end.toISOString(),
         event: {
           id: targetEvent.Id,
           subject: targetEvent.Subject,

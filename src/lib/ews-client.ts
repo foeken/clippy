@@ -396,7 +396,7 @@ export interface MailFolderListResponse {
   value: MailFolder[];
 }
 
-export type ResponseType = 'accept' | 'decline' | 'tentative';
+export type ResponseType = 'accept' | 'decline' | 'tentative' | 'propose';
 
 export interface RespondToEventOptions {
   token: string;
@@ -404,6 +404,8 @@ export interface RespondToEventOptions {
   response: ResponseType;
   comment?: string;
   sendResponse?: boolean;
+  proposedStart?: string;
+  proposedEnd?: string;
 }
 
 // ─── Parsing Helpers ───
@@ -1110,21 +1112,28 @@ export async function cancelEvent(token: string, eventId: string, comment?: stri
 
 export async function respondToEvent(options: RespondToEventOptions): Promise<OwaResponse<void>> {
   try {
-    const { token, eventId, response, comment, sendResponse = true } = options;
+    const { token, eventId, response, comment, sendResponse = true, proposedStart, proposedEnd } = options;
     const disposition = sendResponse ? 'SendAndSaveCopy' : 'SaveOnly';
 
     const responseTagMap: Record<ResponseType, string> = {
       accept: 'AcceptItem',
       decline: 'DeclineItem',
       tentative: 'TentativelyAcceptItem',
+      propose: 'TentativelyAcceptItem',
     };
     const tag = responseTagMap[response];
+    const proposedTimeXml = proposedStart || proposedEnd
+      ? `
+          ${proposedStart ? `<t:ProposedStart>${xmlEscape(proposedStart)}</t:ProposedStart>` : ''}
+          ${proposedEnd ? `<t:ProposedEnd>${xmlEscape(proposedEnd)}</t:ProposedEnd>` : ''}`
+      : '';
 
     const envelope = soapEnvelope(`
     <m:CreateItem MessageDisposition="${disposition}">
       <m:Items>
         <t:${tag}>
           <t:ReferenceItemId Id="${xmlEscape(eventId)}" />
+          ${proposedTimeXml}
           ${comment ? `<t:Body BodyType="Text">${xmlEscape(comment)}</t:Body>` : ''}
         </t:${tag}>
       </m:Items>
