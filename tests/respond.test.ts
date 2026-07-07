@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { getInvitationResponseStatus, isCancellationNoticeSubject, isPendingInvitation, resolveProposedResponseWindow } from '../src/commands/respond.js';
+import { respondToEvent } from '../src/lib/ews-client.js';
 import type { CalendarEvent } from '../src/lib/ews-client.js';
 
 function calendarEvent(overrides: Partial<CalendarEvent>): CalendarEvent {
@@ -102,4 +103,18 @@ test('proposal window rejects conflicting end and duration options', () => {
     end: '10:15',
     duration: '60',
   })).toThrow('Use only one of --end or --duration');
+});
+
+test('EWS response path rejects Outlook-visible proposed new times', async () => {
+  const response = await respondToEvent({
+    token: 'unused',
+    eventId: 'event-id',
+    response: 'propose',
+    proposedStart: '2026-07-08T07:45:00.000Z',
+    proposedEnd: '2026-07-08T08:15:00.000Z',
+  });
+
+  expect(response.ok).toBe(false);
+  expect(response.error?.code).toBe('UNSUPPORTED_EWS_PROPOSE_NEW_TIME');
+  expect(response.error?.message).toContain('Microsoft Graph proposedNewTime');
 });

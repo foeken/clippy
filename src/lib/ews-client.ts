@@ -1113,6 +1113,17 @@ export async function cancelEvent(token: string, eventId: string, comment?: stri
 export async function respondToEvent(options: RespondToEventOptions): Promise<OwaResponse<void>> {
   try {
     const { token, eventId, response, comment, sendResponse = true, proposedStart, proposedEnd } = options;
+    if (response === 'propose' || proposedStart || proposedEnd) {
+      return {
+        ok: false,
+        status: 400,
+        error: {
+          code: 'UNSUPPORTED_EWS_PROPOSE_NEW_TIME',
+          message: 'Outlook-visible proposed meeting times require Microsoft Graph proposedNewTime; EWS response items only send a tentative/decline response and do not expose the proposal in Outlook UI.',
+        },
+      };
+    }
+
     const disposition = sendResponse ? 'SendAndSaveCopy' : 'SaveOnly';
 
     const responseTagMap: Record<ResponseType, string> = {
@@ -1122,18 +1133,12 @@ export async function respondToEvent(options: RespondToEventOptions): Promise<Ow
       propose: 'TentativelyAcceptItem',
     };
     const tag = responseTagMap[response];
-    const proposedTimeXml = proposedStart || proposedEnd
-      ? `
-          ${proposedStart ? `<t:ProposedStart>${xmlEscape(proposedStart)}</t:ProposedStart>` : ''}
-          ${proposedEnd ? `<t:ProposedEnd>${xmlEscape(proposedEnd)}</t:ProposedEnd>` : ''}`
-      : '';
 
     const envelope = soapEnvelope(`
     <m:CreateItem MessageDisposition="${disposition}">
       <m:Items>
         <t:${tag}>
           <t:ReferenceItemId Id="${xmlEscape(eventId)}" />
-          ${proposedTimeXml}
           ${comment ? `<t:Body BodyType="Text">${xmlEscape(comment)}</t:Body>` : ''}
         </t:${tag}>
       </m:Items>
