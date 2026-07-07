@@ -366,7 +366,8 @@ export const respondCommand = new Command('respond')
       console.log('  clippy respond accept --id <eventId>');
       console.log('  clippy respond decline --id <eventId>');
       console.log('  clippy respond tentative --id <eventId>');
-      console.log('  clippy respond propose --id <eventId> --date 2026-07-08 --start 09:45 --end 10:15');
+      console.log('  Proposed new times require the Outlook Calendar connector:');
+      console.log('    respond_to_event response=tentative send_response=true proposed_new_start/proposed_new_end');
       console.log('');
       return;
     }

@@ -226,10 +226,13 @@ clippy respond accept --id <eventId>
 clippy respond decline --id <eventId> --comment "Conflict with another meeting"
 clippy respond tentative --id <eventId>
 
-# Propose a new time when you are not the organizer
-# Note: Outlook-visible proposed times require Microsoft Graph proposedNewTime.
-# The current EWS-only auth path rejects this instead of sending a misleading
-# tentative response without a visible proposed time.
+# Propose a new time when you are not the organizer.
+# Agent note: do not send these through Clippy/EWS. Use Clippy only to find the
+# event ID and compute/check the proposed window, then send the proposal with the
+# Outlook Calendar connector's respond_to_event action:
+#   response: "tentative" or "decline"
+#   send_response: true
+#   proposed_new_start / proposed_new_end: Graph dateTimeTimeZone values
 clippy respond propose --id <eventId> --date 2026-07-08 --start 09:45 --end 10:15
 clippy respond propose --id <eventId> --date 2026-07-08 --start 09:45 --duration 30
 
