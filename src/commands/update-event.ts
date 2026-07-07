@@ -1,6 +1,24 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { getCalendarEvents, updateEvent, searchRooms, getRooms, getCalendarEvent, type CalendarShowAs, type CalendarSensitivity } from '../lib/ews-client.js';
+import {
+  getCalendarEvents,
+  updateEvent,
+  searchRooms,
+  getRooms,
+  getCalendarEvent,
+  getRecurringMasterEvent,
+  getOwaUserInfo,
+  getRawFreeBusy,
+  type CalendarEvent,
+  type CalendarShowAs,
+  type CalendarSensitivity,
+} from '../lib/ews-client.js';
+import {
+  availabilityIntervalMinutes,
+  collectEventAvailabilityParticipants,
+  evaluateSlotAvailability,
+  type SlotAvailabilitySummary,
+} from '../lib/calendar-availability.js';
 import { assertReadWriteAllowed } from '../lib/readonly.js';
 
 function formatTime(dateStr: string): string {
@@ -51,6 +69,109 @@ function parseTimeToDate(timeStr: string, baseDate: Date): Date {
   }
 
   return result;
+}
+
+function parseDateTimeToDate(value: string, baseDate: Date): Date {
+  const trimmed = value.trim();
+  const localDateTime = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s])(\d{1,2}):(\d{2})$/);
+  if (localDateTime) {
+    const [, year, month, day, hour, minute] = localDateTime;
+    return new Date(
+      Number.parseInt(year, 10),
+      Number.parseInt(month, 10) - 1,
+      Number.parseInt(day, 10),
+      Number.parseInt(hour, 10),
+      Number.parseInt(minute, 10),
+      0,
+      0
+    );
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  return parseTimeToDate(trimmed, baseDate);
+}
+
+function parseMoveDate(value: string): Date {
+  const normalized = value.trim().toLowerCase();
+  if (['today', 'tomorrow', 'yesterday'].includes(normalized)) {
+    const parsed = parseDay(normalized);
+    parsed.setHours(0, 0, 0, 0);
+    return parsed;
+  }
+
+  const dateOnly = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!dateOnly) {
+    throw new Error('Invalid --date value. Use YYYY-MM-DD, today, tomorrow, or yesterday.');
+  }
+
+  const [, year, month, day] = dateOnly;
+  return new Date(
+    Number.parseInt(year, 10),
+    Number.parseInt(month, 10) - 1,
+    Number.parseInt(day, 10),
+    0,
+    0,
+    0,
+    0
+  );
+}
+
+function moveDateKeepingTime(date: Date, targetDate: Date): Date {
+  return new Date(
+    targetDate.getFullYear(),
+    targetDate.getMonth(),
+    targetDate.getDate(),
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds(),
+    date.getMilliseconds()
+  );
+}
+
+function resolveProposedWindow(
+  event: CalendarEvent,
+  options: { date?: string; start?: string; end?: string }
+): { start: Date; end: Date; changed: boolean } {
+  const currentStart = new Date(event.Start.DateTime);
+  const currentEnd = new Date(event.End.DateTime);
+  if (Number.isNaN(currentStart.getTime()) || Number.isNaN(currentEnd.getTime())) {
+    throw new Error('Event has invalid start or end time.');
+  }
+
+  const durationMs = currentEnd.getTime() - currentStart.getTime();
+  if (durationMs <= 0) {
+    throw new Error('Event has invalid duration.');
+  }
+
+  const moveDate = options.date ? parseMoveDate(options.date) : undefined;
+  const baseDate = moveDate || currentStart;
+  let start = moveDate ? moveDateKeepingTime(currentStart, moveDate) : new Date(currentStart);
+  let end = moveDate ? new Date(start.getTime() + durationMs) : new Date(currentEnd);
+
+  if (options.start) {
+    start = parseDateTimeToDate(options.start, baseDate);
+    if (!options.end) {
+      end = new Date(start.getTime() + durationMs);
+    }
+  }
+
+  if (options.end) {
+    end = parseDateTimeToDate(options.end, start);
+  }
+
+  if (end <= start) {
+    throw new Error('Proposed event end must be after the proposed start.');
+  }
+
+  return {
+    start,
+    end,
+    changed: Boolean(options.date || options.start || options.end),
+  };
 }
 
 function toEwsDateTime(date: Date): string {
@@ -185,6 +306,47 @@ function writeError(message: string, json?: boolean): void {
   }
 }
 
+function eventWithUpdatedAttendees(
+  event: CalendarEvent,
+  attendees?: Array<{ email: string; name?: string; type?: 'Required' | 'Optional' | 'Resource' }>
+): CalendarEvent {
+  if (!attendees) return event;
+
+  return {
+    ...event,
+    Attendees: attendees.map(attendee => ({
+      Type: attendee.type || 'Required',
+      Status: { Response: 'None', Time: '' },
+      EmailAddress: {
+        Name: attendee.name || attendee.email,
+        Address: attendee.email,
+      },
+    })),
+  };
+}
+
+function formatBlocker(blocker: { start: string; end: string; busyType: string; subject?: string; location?: string }): string {
+  const subject = blocker.subject ? ` "${blocker.subject}"` : '';
+  const location = blocker.location ? ` at ${blocker.location}` : '';
+  return `${formatTime(blocker.start)}-${formatTime(blocker.end)} ${blocker.busyType}${subject}${location}`;
+}
+
+function printAvailabilitySummary(summary: SlotAvailabilitySummary): void {
+  console.log(`\nAttendee availability for ${formatDate(summary.start)} ${formatTime(summary.start)} - ${formatTime(summary.end)}:`);
+
+  if (summary.allFree) {
+    console.log('  All checked participants are free.');
+    return;
+  }
+
+  for (const participant of summary.participants.filter(p => !p.available)) {
+    const blockers = participant.blockers.length > 0
+      ? participant.blockers.map(formatBlocker).join('; ')
+      : participant.responseCode || participant.status;
+    console.log(`  ${participant.email} (${participant.type}): ${participant.status} - ${blockers}`);
+  }
+}
+
 export const updateEventCommand = new Command('update-event')
   .description('Update a calendar event')
   .argument('[eventIndex]', 'Event index from the list (deprecated; use --id)')
@@ -193,6 +355,7 @@ export const updateEventCommand = new Command('update-event')
   .option('--title <text>', 'New title/subject')
   .option('--local-title <text>', 'Set a local-only title on your calendar copy')
   .option('--description <text>', 'New description/body')
+  .option('--date <day>', 'Move event to this date (YYYY-MM-DD, today, tomorrow)')
   .option('--start <time>', 'New start time (e.g., 14:00, 2pm)')
   .option('--end <time>', 'New end time (e.g., 15:00, 3pm)')
   .option('--add-attendee <email>', 'Add an attendee (can be used multiple times)', (val, arr: string[]) => [...arr, val], [])
@@ -208,6 +371,12 @@ export const updateEventCommand = new Command('update-event')
   .option('--no-reminder', 'Clear/disable the event reminder')
   .option('--teams', 'Make it a Teams meeting')
   .option('--no-teams', 'Remove Teams meeting')
+  .option('--series', 'Apply organizer-owned updates to the recurring series master')
+  .option('--notify-attendees', 'Send meeting update notifications to existing attendees')
+  .option('--no-notify-attendees', 'Do not send meeting update notifications')
+  .option('--check-attendees', 'Check the proposed time against the organizer and current attendees')
+  .option('--dry-run', 'Preview the update without writing to the calendar')
+  .option('--force', 'Apply the update even if --check-attendees finds busy attendees')
   .option('--json', 'Output as JSON')
   .option('--token <token>', 'Use a specific token')
   .action(async (eventIndex: string | undefined, options: {
@@ -216,6 +385,7 @@ export const updateEventCommand = new Command('update-event')
     title?: string;
     localTitle?: string;
     description?: string;
+    date?: string;
     start?: string;
     end?: string;
     addAttendee: string[];
@@ -229,6 +399,11 @@ export const updateEventCommand = new Command('update-event')
     normal?: boolean;
     reminder?: string | false;
     teams?: boolean;
+    series?: boolean;
+    notifyAttendees?: boolean;
+    checkAttendees?: boolean;
+    dryRun?: boolean;
+    force?: boolean;
     json?: boolean;
     token?: string;
   }) => {
@@ -245,14 +420,14 @@ export const updateEventCommand = new Command('update-event')
       process.exit(1);
     }
 
-    const hasOrganizerUpdates = options.title || options.description || options.start ||
+    const hasOrganizerUpdates = options.title || options.description || options.date || options.start ||
       options.end || options.addAttendee.length > 0 || options.room ||
       options.location || requestedShowAs !== undefined || options.teams !== undefined;
     const hasLocalTitleUpdate = options.localTitle !== undefined;
     const hasSensitivityUpdate = requestedSensitivity !== undefined;
     const hasUpdates = hasOrganizerUpdates || requestedReminder.hasReminderUpdate || hasLocalTitleUpdate || hasSensitivityUpdate;
 
-    if (hasUpdates) {
+    if (hasUpdates && !options.dryRun) {
       assertReadWriteAllowed('Updating events');
     }
 
@@ -306,6 +481,7 @@ export const updateEventCommand = new Command('update-event')
             start: e.Start.DateTime,
             end: e.End.DateTime,
             showAs: e.ShowAs,
+            type: e.CalendarItemType,
             sensitivity: e.Sensitivity,
             isOrganizer: e.IsOrganizer,
             reminderIsSet: e.reminderIsSet,
@@ -332,6 +508,9 @@ export const updateEventCommand = new Command('update-event')
         console.log(`\n  [${i + 1}] ${event.Subject}`);
         console.log(`      ${startTime} - ${endTime}`);
         console.log(`      Show as: ${formatShowAs(event.ShowAs)}`);
+        if (event.CalendarItemType) {
+          console.log(`      Type: ${event.CalendarItemType}`);
+        }
         if (event.Sensitivity && event.Sensitivity !== 'Normal') {
           console.log(`      Sensitivity: ${event.Sensitivity}`);
         }
@@ -359,8 +538,10 @@ export const updateEventCommand = new Command('update-event')
       console.log('  clippy update-event <number> --title "New Title"');
       console.log('  clippy update-event <number> --add-attendee user@example.com');
       console.log('  clippy update-event <number> --room "Taxi"');
+      console.log('  clippy update-event <number> --date 2026-07-03 --start 11:00 --end 11:30 --check-attendees --dry-run');
       console.log('  clippy update-event <number> --start 14:00 --end 15:00');
       console.log('  clippy update-event <number> --show-as busy');
+      console.log('  clippy update-event <number> --series --title "Weekly Sync" --free');
       console.log('  clippy update-event <number> --reminder 30');
       console.log('  clippy update-event <number> --no-reminder');
       console.log('  clippy update-event <number> --local-title "My title"');
@@ -396,11 +577,23 @@ export const updateEventCommand = new Command('update-event')
       process.exit(1);
     }
 
-    if (!hasUpdates) {
+    if (options.series) {
+      const masterResult = await getRecurringMasterEvent(authResult.token!, targetEvent.Id);
+      if (!masterResult.ok || !masterResult.data) {
+        writeError(masterResult.error?.message || 'Failed to resolve recurring master.', options.json);
+        process.exit(1);
+      }
+      targetEvent = masterResult.data;
+    }
+
+    if (!hasUpdates && !options.checkAttendees) {
       // Show current event details
       console.log(`\nEvent: ${targetEvent.Subject}`);
       console.log(`  When: ${formatDate(targetEvent.Start.DateTime)} ${formatTime(targetEvent.Start.DateTime)} - ${formatTime(targetEvent.End.DateTime)}`);
       console.log(`  Show as: ${formatShowAs(targetEvent.ShowAs)}`);
+      if (targetEvent.CalendarItemType) {
+        console.log(`  Type: ${targetEvent.CalendarItemType}`);
+      }
       console.log(`  Sensitivity: ${targetEvent.Sensitivity || 'Normal'}`);
       console.log(`  Reminder: ${formatReminder(targetEvent)}`);
       if (targetEvent.Location?.DisplayName) {
@@ -414,6 +607,7 @@ export const updateEventCommand = new Command('update-event')
         }
       }
       console.log('\nUse options like --title, --add-attendee, --room, --show-as, --private, --reminder, or --local-title to update.');
+      console.log('Use --check-attendees with --date/--start/--end to test a move before applying it.');
       return;
     }
 
@@ -424,6 +618,14 @@ export const updateEventCommand = new Command('update-event')
 
     if (hasLocalTitleUpdate && targetEvent.IsOrganizer) {
       writeError('Use --title for events you organize. --local-title is for attendee copies.', options.json);
+      process.exit(1);
+    }
+
+    let proposedWindow: ReturnType<typeof resolveProposedWindow>;
+    try {
+      proposedWindow = resolveProposedWindow(targetEvent, options);
+    } catch (err) {
+      writeError(err instanceof Error ? err.message : 'Invalid event time update.', options.json);
       process.exit(1);
     }
 
@@ -444,18 +646,14 @@ export const updateEventCommand = new Command('update-event')
       updateOptions.body = options.description;
     }
 
-    // Handle time changes
-    if (options.start || options.end) {
-      const eventDate = new Date(targetEvent.Start.DateTime);
-
-      if (options.start) {
-        const newStart = parseTimeToDate(options.start, eventDate);
-        updateOptions.start = toEwsDateTime(newStart);
+    // Handle time changes. If the start date/time changes and no explicit end is
+    // provided, preserve the original event duration.
+    if (proposedWindow.changed) {
+      if (options.date || options.start) {
+        updateOptions.start = toEwsDateTime(proposedWindow.start);
       }
-
-      if (options.end) {
-        const newEnd = parseTimeToDate(options.end, eventDate);
-        updateOptions.end = toEwsDateTime(newEnd);
+      if (options.date || options.start || options.end) {
+        updateOptions.end = toEwsDateTime(proposedWindow.end);
       }
     }
 
@@ -541,6 +739,104 @@ export const updateEventCommand = new Command('update-event')
       updateOptions.isOnlineMeeting = options.teams;
     }
 
+    const hasExistingAttendees = (targetEvent.Attendees || []).some(attendee =>
+      Boolean(attendee.EmailAddress?.Address)
+    );
+    const hasAttendeeVisibleUpdates = Boolean(
+      options.title ||
+      options.description ||
+      proposedWindow.changed ||
+      options.addAttendee.length > 0 ||
+      options.room ||
+      options.location ||
+      options.teams !== undefined
+    );
+    const shouldNotifyAttendees = options.notifyAttendees ??
+      Boolean(targetEvent.IsOrganizer && hasExistingAttendees && hasAttendeeVisibleUpdates);
+
+    if (shouldNotifyAttendees || options.notifyAttendees === false) {
+      updateOptions.notifyAttendees = shouldNotifyAttendees;
+    }
+
+    let availability: SlotAvailabilitySummary | undefined;
+
+    if (options.checkAttendees) {
+      const eventForAvailability = eventWithUpdatedAttendees(targetEvent, updateOptions.attendees);
+      let fallbackOrganizerEmail: string | undefined;
+
+      if (!eventForAvailability.Organizer?.EmailAddress?.Address) {
+        const userInfo = await getOwaUserInfo(authResult.token!);
+        fallbackOrganizerEmail = userInfo.ok ? userInfo.data?.email : undefined;
+      }
+
+      const participants = collectEventAvailabilityParticipants(eventForAvailability, fallbackOrganizerEmail);
+      if (participants.length === 0) {
+        writeError('No organizer or attendees found to check.', options.json);
+        process.exit(1);
+      }
+
+      const freeBusyResult = await getRawFreeBusy(
+        authResult.token!,
+        participants.map(participant => participant.email),
+        proposedWindow.start.toISOString(),
+        proposedWindow.end.toISOString(),
+        availabilityIntervalMinutes(proposedWindow.start, proposedWindow.end),
+        true
+      );
+
+      if (!freeBusyResult.ok || !freeBusyResult.data) {
+        writeError(freeBusyResult.error?.message || 'Failed to check attendee availability.', options.json);
+        process.exit(1);
+      }
+
+      availability = evaluateSlotAvailability(
+        freeBusyResult.data,
+        participants,
+        proposedWindow.start.toISOString(),
+        proposedWindow.end.toISOString(),
+        targetEvent
+      );
+
+      if (!options.json) {
+        printAvailabilitySummary(availability);
+      }
+
+      if (!availability.allFree && !options.force && !options.dryRun) {
+        const message = 'Attendees are not all free. Use --force to update anyway.';
+        if (options.json) {
+          console.log(JSON.stringify({ error: message, availability }, null, 2));
+        } else {
+          console.error(`\nError: ${message}`);
+        }
+        process.exit(1);
+      }
+    }
+
+    if (options.dryRun || !hasUpdates) {
+      if (options.json) {
+        console.log(JSON.stringify({
+          success: true,
+          dryRun: true,
+          event: {
+            id: targetEvent.Id,
+            subject: updateOptions.subject || targetEvent.Subject,
+            start: updateOptions.start || targetEvent.Start.DateTime,
+            end: updateOptions.end || targetEvent.End.DateTime,
+            showAs: updateOptions.showAs || targetEvent.ShowAs,
+            sensitivity: updateOptions.sensitivity || targetEvent.Sensitivity,
+            notifyAttendees: shouldNotifyAttendees,
+          },
+          ...(availability ? { availability } : {}),
+        }, null, 2));
+      } else if (options.dryRun) {
+        if (shouldNotifyAttendees) {
+          console.log('\nDry run: attendee notifications would be sent.');
+        }
+        console.log('\nDry run: event was not updated.\n');
+      }
+      return;
+    }
+
     if (!options.json) {
       console.log(`\nUpdating: ${targetEvent.Subject}`);
     }
@@ -568,7 +864,9 @@ export const updateEventCommand = new Command('update-event')
           sensitivity: updateResult.data?.Sensitivity || requestedSensitivity || targetEvent.Sensitivity,
           reminderIsSet: updateResult.data?.reminderIsSet ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderIsSet : targetEvent.reminderIsSet),
           reminderMinutesBeforeStart: updateResult.data?.reminderMinutesBeforeStart ?? (requestedReminder.hasReminderUpdate ? requestedReminder.reminderMinutesBeforeStart : targetEvent.reminderMinutesBeforeStart),
+          notifyAttendees: shouldNotifyAttendees,
         },
+        ...(availability ? { availability } : {}),
         ...(hasLocalTitleUpdate ? {
           warnings: [
             'Local title updates only affect your mailbox copy and may be overwritten by organizer updates.',
@@ -590,6 +888,9 @@ export const updateEventCommand = new Command('update-event')
       console.log(`  Show as: ${formatShowAs(resultShowAs)}`);
       console.log(`  Sensitivity: ${resultSensitivity}`);
       console.log(`  Reminder: ${formatReminder({ reminderIsSet: resultReminderIsSet, reminderMinutesBeforeStart: resultReminderMinutes })}`);
+      if (shouldNotifyAttendees) {
+        console.log('  Attendee notifications: sent');
+      }
       if (hasLocalTitleUpdate) {
         console.log('  Note: local title updates only affect your mailbox copy and may be overwritten by organizer updates.');
       }

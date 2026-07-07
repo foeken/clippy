@@ -156,6 +156,11 @@ clippy update-event 1 --free
 # Update by event ID
 clippy update-event --id <eventId> --title "New Title"
 clippy update-event --id <eventId> --start 10:00 --end 11:00
+clippy update-event --id <eventId> --date 2026-07-03 --start 11:00 --end 11:30
+clippy update-event --id <eventId> --end 11:30 --check-attendees --dry-run
+clippy update-event --id <eventId> --date 2026-07-03 --start 16:00 --end 17:00 --check-attendees
+clippy update-event --id <eventId> --date 2026-07-03 --start 16:00 --end 17:00 --no-notify-attendees
+clippy update-event --id <occurrenceEventId> --series --title "Remote / WFH (non-blocking)" --free
 clippy update-event --id <eventId> --add-attendee "new@company.com"
 clippy update-event --id <eventId> --room "Room B"
 clippy update-event --id <eventId> --location "Off-site"
@@ -179,6 +184,17 @@ clippy update-event --id <eventId> --local-title "My title"
 # Show events from a specific day
 clippy update-event --day tomorrow
 ```
+
+Use `--check-attendees` with a time/date change to check the organizer, existing
+attendees, added attendees, and rooms before writing the update. If anyone is
+busy, the update is blocked unless you pass `--force`. Use `--dry-run` to only
+preview the move and availability result. Organizer-owned time, date, title,
+description, location, room, attendee, and online-meeting changes notify existing
+attendees by default; pass `--no-notify-attendees` for a silent edit.
+
+By default, updating a recurring event occurrence targets that occurrence. Pass
+`--series` to resolve the recurring master and apply organizer-owned updates,
+such as `--title` or `--free`, to the whole chain.
 
 ### Delete/Cancel Events
 
@@ -228,6 +244,9 @@ clippy findtime monday friday alice@company.com
 
 # Custom duration and working hours
 clippy findtime nextweek alice@company.com --duration 60 --start 10 --end 16
+
+# Search with attendees from an existing event
+clippy findtime 2026-07-03 --event-id <eventId> --duration 30 --start 9 --end 11
 
 # Only check specified people (exclude yourself)
 clippy findtime nextweek alice@company.com --solo

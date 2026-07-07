@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolveAuth } from '../lib/auth.js';
-import { getRawFreeBusy, getOwaUserInfo, type RawFreeBusySlot } from '../lib/ews-client.js';
+import { getCalendarEvent, getRawFreeBusy, getOwaUserInfo, type CalendarEvent, type RawFreeBusySlot } from '../lib/ews-client.js';
+import { collectEventAvailabilityParticipants } from '../lib/calendar-availability.js';
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -112,6 +113,19 @@ function parseDuration(value: string): number {
   return duration;
 }
 
+function eventDurationMinutes(event: CalendarEvent): number {
+  const start = new Date(event.Start.DateTime);
+  const end = new Date(event.End.DateTime);
+  const duration = Math.round((end.getTime() - start.getTime()) / 60000);
+  if (!Number.isInteger(duration) || duration <= 0) {
+    throw new Error('Event has invalid duration.');
+  }
+  if (duration % 5 !== 0) {
+    throw new Error('Event duration must be divisible by 5 minutes.');
+  }
+  return duration;
+}
+
 function availabilityInterval(durationMinutes: number): number {
   for (const interval of [30, 15, 10, 5]) {
     if (durationMinutes % interval === 0) return interval;
@@ -170,14 +184,16 @@ export const findtimeCommand = new Command('findtime')
   .description('Find available meeting times with one or more people')
   .argument('[start]', 'Start: today, tomorrow, monday-sunday, week, nextweek, or YYYY-MM-DD', 'nextweek')
   .argument('[endOrEmails...]', 'End day for range AND/OR email addresses')
-  .option('--duration <minutes>', 'Meeting duration in minutes', '30')
+  .option('--duration <minutes>', 'Meeting duration in minutes; defaults to event duration with --event-id, otherwise 30')
+  .option('--event-id <eventId>', 'Use the organizer and attendees from an existing calendar event')
   .option('--start <hour>', 'Work day start hour (0-23)', '9')
   .option('--end <hour>', 'Work day end hour (0-23)', '17')
   .option('--solo', 'Only check specified people, don\'t include yourself')
   .option('--json', 'Output as JSON')
   .option('--token <token>', 'Use a specific token')
   .action(async (startDay: string, endOrEmails: string[], options: {
-    duration: string;
+    duration?: string;
+    eventId?: string;
     start: string;
     end: string;
     solo?: boolean;
@@ -189,7 +205,6 @@ export const findtimeCommand = new Command('findtime')
     let workEnd: number;
 
     try {
-      duration = parseDuration(options.duration);
       workStart = parseHour(options.start, '--start');
       workEnd = parseHour(options.end, '--end');
       if (workStart >= workEnd) {
@@ -219,6 +234,44 @@ export const findtimeCommand = new Command('findtime')
       process.exit(1);
     }
 
+    let sourceEvent: CalendarEvent | undefined;
+    let sourceEventFallbackOrganizerEmail: string | undefined;
+
+    if (options.eventId) {
+      const eventResult = await getCalendarEvent(authResult.token!, options.eventId);
+      if (!eventResult.ok || !eventResult.data) {
+        const message = eventResult.error?.message || `Invalid event id: ${options.eventId}`;
+        if (options.json) {
+          console.log(JSON.stringify({ error: message }, null, 2));
+        } else {
+          console.error(`Error: ${message}`);
+        }
+        process.exit(1);
+      }
+      sourceEvent = eventResult.data;
+
+      if (!sourceEvent.Organizer?.EmailAddress?.Address) {
+        const userInfo = await getOwaUserInfo(authResult.token!);
+        sourceEventFallbackOrganizerEmail = userInfo.ok ? userInfo.data?.email : undefined;
+      }
+    }
+
+    try {
+      duration = options.duration
+        ? parseDuration(options.duration)
+        : sourceEvent
+          ? eventDurationMinutes(sourceEvent)
+          : 30;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid findtime options.';
+      if (options.json) {
+        console.log(JSON.stringify({ error: message }, null, 2));
+      } else {
+        console.error(`Error: ${message}`);
+      }
+      process.exit(1);
+    }
+
     // Parse arguments: figure out which are dates vs emails
     const dateKeywords = ['today', 'tomorrow', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'week', 'thisweek', 'nextweek'];
     const isDateArg = (arg: string) => {
@@ -240,8 +293,16 @@ export const findtimeCommand = new Command('findtime')
       }
     }
 
-    // Get current user's email to include in search (unless --solo)
-    if (!options.solo) {
+    if (sourceEvent) {
+      const eventEmails = collectEventAvailabilityParticipants(sourceEvent, sourceEventFallbackOrganizerEmail)
+        .map(participant => participant.email);
+      emails = [...eventEmails, ...emails];
+    }
+
+    emails = [...new Map(emails.map(email => [email.toLowerCase(), email])).values()];
+
+    // Get current user's email to include in search (unless --solo or the event already supplied participants)
+    if (!options.solo && !sourceEvent) {
       const userInfo = await getOwaUserInfo(authResult.token!);
       if (userInfo.ok && userInfo.data?.email) {
         // Add current user if not already in the list
@@ -252,8 +313,14 @@ export const findtimeCommand = new Command('findtime')
     }
 
     if (emails.length === 0) {
-      console.error('Error: Please provide at least one email address.');
-      console.error('\nUsage: clippy findtime nextweek user@example.com');
+      const message = 'Please provide at least one email address or --event-id.';
+      if (options.json) {
+        console.log(JSON.stringify({ error: message }, null, 2));
+      } else {
+        console.error(`Error: ${message}`);
+        console.error('\nUsage: clippy findtime nextweek user@example.com');
+        console.error('   or: clippy findtime 2026-07-03 --event-id <eventId>');
+      }
       process.exit(1);
     }
 
@@ -282,6 +349,14 @@ export const findtimeCommand = new Command('findtime')
     if (options.json) {
       console.log(JSON.stringify({
         attendees: emails,
+        ...(sourceEvent ? {
+          event: {
+            id: sourceEvent.Id,
+            subject: sourceEvent.Subject,
+            start: sourceEvent.Start.DateTime,
+            end: sourceEvent.End.DateTime,
+          },
+        } : {}),
         duration: duration,
         dateRange: { start: start.toISOString(), end: end.toISOString() },
         availableSlots: freeSlots,
@@ -290,6 +365,9 @@ export const findtimeCommand = new Command('findtime')
     }
 
     console.log(`\n🗓️  Finding ${duration}-minute meeting times`);
+    if (sourceEvent) {
+      console.log(`   Event: ${sourceEvent.Subject}`);
+    }
     console.log(`   Attendees: ${emails.join(', ')}`);
     console.log(`   Date range: ${label}`);
     console.log('─'.repeat(50));

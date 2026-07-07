@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { createEvent, getCalendarEvent, updateEvent } from '../src/lib/ews-client.js';
+import { createEvent, getCalendarEvent, getRecurringMasterEvent, updateEvent } from '../src/lib/ews-client.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -113,6 +113,24 @@ test('updateEvent writes sensitivity FieldURI updates without meeting notificati
   expect(envelopes[0]).toContain('SendMeetingInvitationsOrCancellations="SendToNone"');
 });
 
+test('updateEvent can send updates to existing meeting attendees', async () => {
+  const envelopes: string[] = [];
+  stubEws(envelopes);
+
+  const result = await updateEvent({
+    token: 'token',
+    eventId: 'event-id',
+    start: '2026-06-08T15:00:00Z',
+    end: '2026-06-08T15:30:00Z',
+    notifyAttendees: true,
+  });
+
+  expect(result.ok).toBe(true);
+  expect(envelopes[0]).toContain('FieldURI="calendar:Start"');
+  expect(envelopes[0]).toContain('FieldURI="calendar:End"');
+  expect(envelopes[0]).toContain('SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy"');
+});
+
 test('getCalendarEvent parses calendar sensitivity', async () => {
   const envelopes: string[] = [];
   stubEws(envelopes);
@@ -124,6 +142,50 @@ test('getCalendarEvent parses calendar sensitivity', async () => {
   expect(result.data?.MyResponseType).toBe('Accept');
   expect(envelopes[0]).toContain('FieldURI="item:Sensitivity"');
   expect(envelopes[0]).toContain('FieldURI="calendar:MyResponseType"');
+  expect(envelopes[0]).toContain('FieldURI="calendar:CalendarItemType"');
+});
+
+test('getRecurringMasterEvent resolves an occurrence to the recurring master', async () => {
+  const envelopes: string[] = [];
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const request = String(init?.body || '');
+    envelopes.push(request);
+    const isFindItem = request.includes('<m:FindItem');
+
+    return new Response(`
+      <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <m:Response xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+            <m:ResponseMessages>
+              <m:ResponseMessage ResponseClass="Success">
+                <m:ResponseCode>NoError</m:ResponseCode>
+                <m:Items>
+                  <t:CalendarItem>
+                    <t:ItemId Id="${isFindItem ? 'master-id' : 'occurrence-id'}" />
+                    <t:Subject>Remote / WFH</t:Subject>
+                    <t:Start>2026-07-10T00:00:00Z</t:Start>
+                    <t:End>2026-07-11T00:00:00Z</t:End>
+                    <t:CalendarItemType>${isFindItem ? 'RecurringMaster' : 'Occurrence'}</t:CalendarItemType>
+                    <t:MyResponseType>Organizer</t:MyResponseType>
+                  </t:CalendarItem>
+                </m:Items>
+              </m:ResponseMessage>
+            </m:ResponseMessages>
+          </m:Response>
+        </soap:Body>
+      </soap:Envelope>
+    `, { status: 200 });
+  }) as typeof fetch;
+
+  const result = await getRecurringMasterEvent('token', 'occurrence-id');
+
+  expect(result.ok).toBe(true);
+  expect(result.data?.Id).toBe('master-id');
+  expect(result.data?.CalendarItemType).toBe('RecurringMaster');
+  expect(envelopes).toHaveLength(2);
+  expect(envelopes[1]).toContain('<m:FindItem');
+  expect(envelopes[1]).toContain('Value="Remote / WFH"');
 });
 
 test('updateEvent can disable reminders without requiring reminder minutes', async () => {

@@ -177,6 +177,7 @@ export interface CalendarEvent {
   WebLink?: string;
   reminderIsSet?: boolean;
   reminderMinutesBeforeStart?: number;
+  CalendarItemType?: 'Single' | 'Occurrence' | 'Exception' | 'RecurringMaster';
 }
 
 export type CalendarShowAs = 'Free' | 'Tentative' | 'Busy' | 'OOF' | 'WorkingElsewhere';
@@ -241,6 +242,7 @@ export interface UpdateEventOptions {
   location?: string;
   attendees?: Array<{ email: string; name?: string; type?: 'Required' | 'Optional' | 'Resource' }>;
   isOnlineMeeting?: boolean;
+  notifyAttendees?: boolean;
   showAs?: CalendarShowAs;
   reminderIsSet?: boolean;
   reminderMinutesBeforeStart?: number;
@@ -425,6 +427,7 @@ function parseCalendarItem(block: string, includeFullBody = false): CalendarEven
   const reminderIsSetValue = extractTag(block, 'ReminderIsSet') || extractTag(block, 'IsReminderSet');
   const reminderMinutesValue = extractTag(block, 'ReminderMinutesBeforeStart');
   const reminderMinutes = reminderMinutesValue ? Number.parseInt(reminderMinutesValue, 10) : undefined;
+  const calendarItemType = extractTag(block, 'CalendarItemType') as CalendarEvent['CalendarItemType'];
 
   // Organizer
   const organizerBlock = extractSelfClosingOrBlock(block, 'Organizer');
@@ -496,7 +499,35 @@ function parseCalendarItem(block: string, includeFullBody = false): CalendarEven
     Importance: importance,
     reminderIsSet: reminderIsSetValue ? reminderIsSetValue.toLowerCase() === 'true' : undefined,
     reminderMinutesBeforeStart: Number.isFinite(reminderMinutes) ? reminderMinutes : undefined,
+    CalendarItemType: calendarItemType || undefined,
   };
+}
+
+function calendarItemShapeXml(baseShape: 'Default' | 'AllProperties' = 'Default', includeBody = false): string {
+  return `
+      <m:ItemShape>
+        <t:BaseShape>${baseShape}</t:BaseShape>
+        ${includeBody ? '<t:BodyType>Text</t:BodyType>' : ''}
+        <t:AdditionalProperties>
+          <t:FieldURI FieldURI="calendar:Location" />
+          <t:FieldURI FieldURI="calendar:Organizer" />
+          <t:FieldURI FieldURI="calendar:RequiredAttendees" />
+          <t:FieldURI FieldURI="calendar:OptionalAttendees" />
+          <t:FieldURI FieldURI="calendar:Resources" />
+          <t:FieldURI FieldURI="calendar:CalendarItemType" />
+          <t:FieldURI FieldURI="item:Categories" />
+          <t:FieldURI FieldURI="calendar:IsAllDayEvent" />
+          <t:FieldURI FieldURI="calendar:IsCancelled" />
+          <t:FieldURI FieldURI="calendar:MyResponseType" />
+          <t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" />
+          <t:FieldURI FieldURI="item:Sensitivity" />
+          <t:FieldURI FieldURI="item:Importance" />
+          <t:FieldURI FieldURI="item:ReminderIsSet" />
+          <t:FieldURI FieldURI="item:ReminderMinutesBeforeStart" />
+          <t:FieldURI FieldURI="${includeBody ? 'item:Body' : 'item:TextBody'}" />
+          ${includeBody ? '<t:FieldURI FieldURI="item:TextBody" />' : ''}
+        </t:AdditionalProperties>
+      </m:ItemShape>`;
 }
 
 function parseEmailMessage(block: string): EmailMessage {
@@ -675,26 +706,7 @@ export async function getCalendarEvents(
   try {
     const envelope = soapEnvelope(`
     <m:FindItem Traversal="Shallow">
-      <m:ItemShape>
-        <t:BaseShape>Default</t:BaseShape>
-        <t:AdditionalProperties>
-          <t:FieldURI FieldURI="calendar:Location" />
-          <t:FieldURI FieldURI="calendar:Organizer" />
-          <t:FieldURI FieldURI="calendar:RequiredAttendees" />
-          <t:FieldURI FieldURI="calendar:OptionalAttendees" />
-          <t:FieldURI FieldURI="calendar:Resources" />
-          <t:FieldURI FieldURI="item:Categories" />
-          <t:FieldURI FieldURI="calendar:IsAllDayEvent" />
-          <t:FieldURI FieldURI="calendar:IsCancelled" />
-          <t:FieldURI FieldURI="calendar:MyResponseType" />
-          <t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" />
-          <t:FieldURI FieldURI="item:Sensitivity" />
-          <t:FieldURI FieldURI="item:Importance" />
-          <t:FieldURI FieldURI="item:ReminderIsSet" />
-          <t:FieldURI FieldURI="item:ReminderMinutesBeforeStart" />
-          <t:FieldURI FieldURI="item:TextBody" />
-        </t:AdditionalProperties>
-      </m:ItemShape>
+      ${calendarItemShapeXml()}
       <m:CalendarView StartDate="${xmlEscape(startDateTime)}" EndDate="${xmlEscape(endDateTime)}" />
       <m:ParentFolderIds>
         <t:DistinguishedFolderId Id="calendar" />
@@ -718,28 +730,7 @@ export async function getCalendarEvent(
   try {
     const envelope = soapEnvelope(`
     <m:GetItem>
-      <m:ItemShape>
-        <t:BaseShape>Default</t:BaseShape>
-        <t:BodyType>Text</t:BodyType>
-        <t:AdditionalProperties>
-          <t:FieldURI FieldURI="calendar:Location" />
-          <t:FieldURI FieldURI="calendar:Organizer" />
-          <t:FieldURI FieldURI="calendar:RequiredAttendees" />
-          <t:FieldURI FieldURI="calendar:OptionalAttendees" />
-          <t:FieldURI FieldURI="calendar:Resources" />
-          <t:FieldURI FieldURI="item:Categories" />
-          <t:FieldURI FieldURI="calendar:IsAllDayEvent" />
-          <t:FieldURI FieldURI="calendar:IsCancelled" />
-          <t:FieldURI FieldURI="calendar:MyResponseType" />
-          <t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus" />
-          <t:FieldURI FieldURI="item:Sensitivity" />
-          <t:FieldURI FieldURI="item:Importance" />
-          <t:FieldURI FieldURI="item:ReminderIsSet" />
-          <t:FieldURI FieldURI="item:ReminderMinutesBeforeStart" />
-          <t:FieldURI FieldURI="item:Body" />
-          <t:FieldURI FieldURI="item:TextBody" />
-        </t:AdditionalProperties>
-      </m:ItemShape>
+      ${calendarItemShapeXml('Default', true)}
       <m:ItemIds>
         <t:ItemId Id="${xmlEscape(eventId)}" />
       </m:ItemIds>
@@ -750,6 +741,80 @@ export async function getCalendarEvent(
     if (!block) return { ok: false, status: 404, error: { code: 'NOT_FOUND', message: 'Event not found' } };
 
     return ewsResult(parseCalendarItem(block, true));
+  } catch (err) {
+    return ewsError(err);
+  }
+}
+
+export async function getRecurringMasterEvent(
+  token: string,
+  eventId: string
+): Promise<OwaResponse<CalendarEvent>> {
+  try {
+    const eventResult = await getCalendarEvent(token, eventId);
+    if (!eventResult.ok || !eventResult.data) return eventResult;
+
+    const event = eventResult.data;
+    if (event.CalendarItemType === 'RecurringMaster') {
+      return eventResult;
+    }
+
+    if (!['Occurrence', 'Exception'].includes(event.CalendarItemType || '')) {
+      return {
+        ok: false,
+        status: 400,
+        error: {
+          code: 'NOT_RECURRING',
+          message: 'Selected event is not a recurring occurrence or recurring master.',
+        },
+      };
+    }
+
+    const envelope = soapEnvelope(`
+    <m:FindItem Traversal="Shallow">
+      ${calendarItemShapeXml('AllProperties')}
+      <m:Restriction>
+        <t:Contains ContainmentMode="FullString" ContainmentComparison="IgnoreCase">
+          <t:FieldURI FieldURI="item:Subject" />
+          <t:Constant Value="${xmlEscape(event.Subject)}" />
+        </t:Contains>
+      </m:Restriction>
+      <m:ParentFolderIds>
+        <t:DistinguishedFolderId Id="calendar" />
+      </m:ParentFolderIds>
+    </m:FindItem>`);
+
+    const xml = await callEws(token, envelope);
+    const masters = extractBlocks(xml, 'CalendarItem')
+      .map(block => parseCalendarItem(block))
+      .filter(item =>
+        item.CalendarItemType === 'RecurringMaster' &&
+        item.Subject.toLowerCase() === event.Subject.toLowerCase()
+      );
+
+    if (masters.length === 1) {
+      return ewsResult(masters[0]);
+    }
+
+    if (masters.length > 1) {
+      return {
+        ok: false,
+        status: 409,
+        error: {
+          code: 'AMBIGUOUS_RECURRING_MASTER',
+          message: `Found ${masters.length} recurring masters named "${event.Subject}". Update by the master event id instead.`,
+        },
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      error: {
+        code: 'RECURRING_MASTER_NOT_FOUND',
+        message: `Could not find recurring master for "${event.Subject}".`,
+      },
+    };
   } catch (err) {
     return ewsError(err);
   }
@@ -901,7 +966,7 @@ export async function createEvent(options: CreateEventOptions): Promise<OwaRespo
 
 export async function updateEvent(options: UpdateEventOptions): Promise<OwaResponse<CreatedEvent>> {
   try {
-    const { token, eventId, subject, start, end, body, location, attendees, isOnlineMeeting, showAs, reminderIsSet, reminderMinutesBeforeStart, sensitivity } = options;
+    const { token, eventId, subject, start, end, body, location, attendees, isOnlineMeeting, notifyAttendees, showAs, reminderIsSet, reminderMinutesBeforeStart, sensitivity } = options;
 
     const updates: string[] = [];
 
@@ -962,7 +1027,10 @@ export async function updateEvent(options: UpdateEventOptions): Promise<OwaRespo
       return { ok: false, status: 400, error: { code: 'NO_UPDATES', message: 'No fields to update' } };
     }
 
-    const sendUpdates = attendees && attendees.length > 0 ? 'SendToAllAndSaveCopy' : 'SendToNone';
+    const shouldSendUpdates = notifyAttendees ?? Boolean(attendees && attendees.length > 0);
+    const sendUpdates = shouldSendUpdates
+      ? 'SendToAllAndSaveCopy'
+      : 'SendToNone';
 
     const envelope = soapEnvelope(`
     <m:UpdateItem ConflictResolution="AlwaysOverwrite" SendMeetingInvitationsOrCancellations="${sendUpdates}">
