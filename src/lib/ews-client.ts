@@ -831,7 +831,7 @@ function buildRecurrenceXml(recurrence: Recurrence): string {
       patternXml = `<t:DailyRecurrence><t:Interval>${p.Interval}</t:Interval></t:DailyRecurrence>`;
       break;
     case 'Weekly': {
-      const days = (p.DaysOfWeek || []).map(d => `<t:DayOfWeek>${xmlEscape(d)}</t:DayOfWeek>`).join('');
+      const days = (p.DaysOfWeek || []).map(d => xmlEscape(d)).join(' ');
       patternXml = `<t:WeeklyRecurrence><t:Interval>${p.Interval}</t:Interval><t:DaysOfWeek>${days || ''}</t:DaysOfWeek></t:WeeklyRecurrence>`;
       break;
     }
@@ -937,6 +937,7 @@ export async function createEvent(options: CreateEventOptions): Promise<OwaRespo
           ${body ? `<t:Body BodyType="Text">${xmlEscape(body)}</t:Body>` : ''}
           <t:Start>${xmlEscape(start)}</t:Start>
           <t:End>${xmlEscape(end)}</t:End>
+          ${recurrence ? '<t:StartTimeZone Id="W. Europe Standard Time" /><t:EndTimeZone Id="W. Europe Standard Time" />' : ''}
           ${sensitivity ? `<t:Sensitivity>${xmlEscape(sensitivity)}</t:Sensitivity>` : ''}
           ${location ? `<t:Location>${xmlEscape(location)}</t:Location>` : ''}
           ${attendeesXml}
