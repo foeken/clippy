@@ -87,6 +87,12 @@ clippy calendar nextweek
 clippy calendar -v
 clippy calendar week --verbose
 
+# Compact attendee preview: first attendee per event (with "+N more" when needed)
+clippy calendar week --attendees 1
+
+# JSON output can be trimmed too; it adds AttendeeCount and AttendeesTruncated
+clippy calendar week --attendees 2 --json
+
 # Get one event by ID, including full body text
 clippy calendar --id "<eventId>" --json
 clippy calendar --id "<eventId>" --body

@@ -128,7 +128,35 @@ function getResponseIcon(response: string): string {
   }
 }
 
-function displayEvent(event: CalendarEvent, verbose: boolean): void {
+export function formatAttendeePreview(attendees: CalendarAttendee[], count: number): string {
+  const preview = attendees
+    .slice(0, count)
+    .map(attendee => attendee.EmailAddress.Name || attendee.EmailAddress.Address)
+    .join(', ');
+  const remaining = attendees.length - Math.min(attendees.length, count);
+
+  return remaining > 0 ? `${preview} +${remaining} more` : preview;
+}
+
+export type CalendarEventWithAttendeePreview = CalendarEvent & {
+  AttendeeCount?: number;
+  AttendeesTruncated?: boolean;
+};
+
+export function limitEventAttendees(event: CalendarEvent, count: number): CalendarEventWithAttendeePreview {
+  if (!event.Attendees) {
+    return event;
+  }
+
+  return {
+    ...event,
+    Attendees: event.Attendees.slice(0, count),
+    AttendeeCount: event.Attendees.length,
+    AttendeesTruncated: event.Attendees.length > count,
+  };
+}
+
+function displayEvent(event: CalendarEvent, verbose: boolean, attendeeCount?: number): void {
   const startTime = formatTime(event.Start.DateTime);
   const endTime = formatTime(event.End.DateTime);
   const location = event.Location?.DisplayName || '';
@@ -144,6 +172,10 @@ function displayEvent(event: CalendarEvent, verbose: boolean): void {
     console.log(`     📍 ${location}`);
   }
 
+  if (attendeeCount !== undefined && event.Attendees && event.Attendees.length > 0) {
+    console.log(`     👥 ${formatAttendeePreview(event.Attendees, attendeeCount)}`);
+  }
+
   if (verbose) {
     // Show organizer if not self
     if (!event.IsOrganizer && event.Organizer?.EmailAddress?.Name) {
@@ -151,7 +183,7 @@ function displayEvent(event: CalendarEvent, verbose: boolean): void {
     }
 
     // Show attendees
-    if (event.Attendees && event.Attendees.length > 0) {
+    if (attendeeCount === undefined && event.Attendees && event.Attendees.length > 0) {
       const attendeeList = event.Attendees
         .map((a: CalendarAttendee) => `${getResponseIcon(a.Status.Response)} ${a.EmailAddress.Name}`)
         .join(', ');
@@ -185,11 +217,23 @@ export const calendarCommand = new Command('calendar')
   .argument('[start]', 'Start day: today, yesterday, tomorrow, monday-sunday, week, lastweek, nextweek, or YYYY-MM-DD', 'today')
   .argument('[end]', 'End day for range (optional)')
   .option('-v, --verbose', 'Show attendees and more details')
+  .option('--attendees <count>', 'Show the first N attendees for each event')
   .option('--id <eventId>', 'Show a single calendar event by EWS item ID')
   .option('--body', 'Print the full body text for --id')
   .option('--json', 'Output as JSON')
   .option('--token <token>', 'Use a specific token')
-  .action(async (startDay: string, endDay: string | undefined, options: { json?: boolean; token?: string; verbose?: boolean; id?: string; body?: boolean }) => {
+  .action(async (startDay: string, endDay: string | undefined, options: { json?: boolean; token?: string; verbose?: boolean; attendees?: string; id?: string; body?: boolean }) => {
+    const attendeeCount = options.attendees === undefined ? undefined : Number(options.attendees);
+    if (attendeeCount !== undefined && (!Number.isInteger(attendeeCount) || attendeeCount < 1)) {
+      const error = '--attendees must be a positive whole number';
+      if (options.json) {
+        console.log(JSON.stringify({ error }, null, 2));
+      } else {
+        console.error(`Error: ${error}`);
+      }
+      process.exit(1);
+    }
+
     if (options.body && !options.id) {
       if (options.json) {
         console.log(JSON.stringify({ error: '--body requires --id <eventId>' }, null, 2));
@@ -226,7 +270,11 @@ export const calendarCommand = new Command('calendar')
       }
 
       if (options.json) {
-        console.log(JSON.stringify(result.data, null, 2));
+        console.log(JSON.stringify(
+          attendeeCount === undefined ? result.data : limitEventAttendees(result.data, attendeeCount),
+          null,
+          2,
+        ));
         return;
       }
 
@@ -235,12 +283,14 @@ export const calendarCommand = new Command('calendar')
         return;
       }
 
-      displayEvent(result.data, options.verbose ?? true);
+      displayEvent(result.data, options.verbose ?? true, attendeeCount);
       return;
     }
 
     const { start, end, label } = getDateRange(startDay, endDay);
-    const result = await getCalendarEvents(authResult.token!, start, end);
+    const result = await getCalendarEvents(authResult.token!, start, end, {
+      includeAttendees: attendeeCount !== undefined,
+    });
 
     if (!result.ok || !result.data) {
       if (options.json) {
@@ -254,7 +304,11 @@ export const calendarCommand = new Command('calendar')
     const events = result.data.filter(e => !e.IsCancelled);
 
     if (options.json) {
-      console.log(JSON.stringify(events, null, 2));
+      console.log(JSON.stringify(
+        attendeeCount === undefined ? events : events.map(event => limitEventAttendees(event, attendeeCount)),
+        null,
+        2,
+      ));
       return;
     }
 
@@ -280,12 +334,12 @@ export const calendarCommand = new Command('calendar')
           const dayLabel = formatDate(new Date(dateKey).toISOString());
           console.log(`\n  ${dayLabel}`);
           for (const event of dayEvents) {
-            displayEvent(event, options.verbose ?? false);
+            displayEvent(event, options.verbose ?? false, attendeeCount);
           }
         }
       } else {
         for (const event of events) {
-          displayEvent(event, options.verbose ?? false);
+          displayEvent(event, options.verbose ?? false, attendeeCount);
         }
       }
     }

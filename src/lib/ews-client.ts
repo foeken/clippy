@@ -703,7 +703,8 @@ export async function getOwaUserInfo(token: string): Promise<OwaResponse<OwaUser
 export async function getCalendarEvents(
   token: string,
   startDateTime: string,
-  endDateTime: string
+  endDateTime: string,
+  options: { includeAttendees?: boolean } = {}
 ): Promise<OwaResponse<CalendarEvent[]>> {
   try {
     const envelope = soapEnvelope(`
@@ -718,11 +719,47 @@ export async function getCalendarEvents(
     const xml = await callEws(token, envelope);
     const blocks = extractBlocks(xml, 'CalendarItem');
     const events = blocks.map(block => parseCalendarItem(block));
+    const eventsWithAttendees = options.includeAttendees
+      ? await hydrateCalendarEventAttendees(token, events)
+      : events;
 
-    return ewsResult(events);
+    return ewsResult(eventsWithAttendees);
   } catch (err) {
     return ewsError(err);
   }
+}
+
+/**
+ * CalendarView FindItem responses omit attendee collections in Exchange Online,
+ * even when the fields are requested. Hydrate a whole week in batches rather
+ * than issuing one GetItem request for every event.
+ */
+async function hydrateCalendarEventAttendees(token: string, events: CalendarEvent[]): Promise<CalendarEvent[]> {
+  const attendeeDetails = new Map<string, CalendarEvent>();
+  const eventIds = events.map(event => event.Id).filter(Boolean);
+
+  for (let offset = 0; offset < eventIds.length; offset += 100) {
+    const itemIds = eventIds
+      .slice(offset, offset + 100)
+      .map(id => `<t:ItemId Id="${xmlEscape(id)}" />`)
+      .join('');
+    const envelope = soapEnvelope(`
+    <m:GetItem>
+      ${calendarItemShapeXml()}
+      <m:ItemIds>${itemIds}</m:ItemIds>
+    </m:GetItem>`);
+    const xml = await callEws(token, envelope);
+
+    for (const block of extractBlocks(xml, 'CalendarItem')) {
+      const event = parseCalendarItem(block);
+      attendeeDetails.set(event.Id, event);
+    }
+  }
+
+  return events.map(event => {
+    const details = attendeeDetails.get(event.Id);
+    return details?.Attendees ? { ...event, Attendees: details.Attendees } : event;
+  });
 }
 
 export async function getCalendarEvent(

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { createEvent, getCalendarEvent, getRecurringMasterEvent, respondToEvent, updateEvent } from '../src/lib/ews-client.js';
+import { createEvent, getCalendarEvent, getCalendarEvents, getRecurringMasterEvent, respondToEvent, updateEvent } from '../src/lib/ews-client.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -143,6 +143,58 @@ test('getCalendarEvent parses calendar sensitivity', async () => {
   expect(envelopes[0]).toContain('FieldURI="item:Sensitivity"');
   expect(envelopes[0]).toContain('FieldURI="calendar:MyResponseType"');
   expect(envelopes[0]).toContain('FieldURI="calendar:CalendarItemType"');
+});
+
+test('getCalendarEvents batches attendee hydration only when previews are requested', async () => {
+  const envelopes: string[] = [];
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const request = String(init?.body || '');
+    envelopes.push(request);
+    const isGetItem = request.includes('<m:GetItem');
+    const attendeeXml = isGetItem ? `
+      <t:RequiredAttendees>
+        <t:Attendee>
+          <t:Mailbox><t:Name>Anne Coppens</t:Name><t:EmailAddress>anne.coppens@nedap.com</t:EmailAddress></t:Mailbox>
+          <t:ResponseType>Accept</t:ResponseType>
+        </t:Attendee>
+      </t:RequiredAttendees>` : '';
+
+    return new Response(`
+      <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <m:Response xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+            <m:ResponseMessages><m:ResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode>
+              <m:Items><t:CalendarItem>
+                <t:ItemId Id="event-id" /><t:Subject>Test event</t:Subject>
+                <t:Start>2026-07-20T09:00:00Z</t:Start><t:End>2026-07-20T09:30:00Z</t:End>
+                ${attendeeXml}
+              </t:CalendarItem></m:Items>
+            </m:ResponseMessage></m:ResponseMessages>
+          </m:Response>
+        </soap:Body>
+      </soap:Envelope>
+    `, { status: 200 });
+  }) as typeof fetch;
+
+  const result = await getCalendarEvents('token', '2026-07-20T00:00:00Z', '2026-07-26T23:59:59Z', { includeAttendees: true });
+
+  expect(result.data?.[0].Attendees?.map(a => a.EmailAddress.Name)).toEqual(['Anne Coppens']);
+  expect(envelopes).toHaveLength(2);
+  expect(envelopes[0]).toContain('<m:FindItem');
+  expect(envelopes[1]).toContain('<m:GetItem');
+  expect(envelopes[1]).toContain('<t:ItemId Id="event-id" />');
+});
+
+test('getCalendarEvents keeps the default calendar view to one request', async () => {
+  const envelopes: string[] = [];
+  stubEws(envelopes);
+
+  await getCalendarEvents('token', '2026-07-20T00:00:00Z', '2026-07-26T23:59:59Z');
+
+  expect(envelopes).toHaveLength(1);
+  expect(envelopes[0]).toContain('<m:FindItem');
+  expect(envelopes[0]).not.toContain('<m:GetItem');
 });
 
 test('getRecurringMasterEvent resolves an occurrence to the recurring master', async () => {
